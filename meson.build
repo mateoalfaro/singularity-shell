@@ -1,0 +1,345 @@
+project('singularity-shell', ['vala', 'c'],
+  version: '0.1.0',
+  default_options: ['buildtype=release', 'strip=true'],
+)
+add_project_arguments('-DGETTEXT_PACKAGE="singularity-desktop"', language: 'c')
+add_project_arguments('-DGOA_API_IS_SUBJECT_TO_CHANGE', language: 'c')
+add_project_arguments('-DGOA_BACKEND_COMPILATION', language: 'c')
+add_project_arguments([
+  '-DGNOME_DESKTOP_USE_UNSTABLE_API',
+], language: 'c')
+add_project_arguments([
+  '--vapidir', join_paths(meson.current_source_dir(), 'src/vapi'),
+  '--vapidir', join_paths(meson.current_source_dir(), 'src/wayland'),
+  '--pkg=goa-backend-1.0',
+  '--pkg=posix',
+  '--pkg=poppler-glib',
+  '--pkg=gtksourceview-5',
+], language: 'vala')
+
+if get_option('buildtype').startswith('release')
+  add_project_arguments(['-ffunction-sections', '-fdata-sections'], language: 'c')
+endif
+
+core_deps = [
+  dependency('gtk4'),
+  dependency('gio-2.0'),
+  dependency('gio-unix-2.0'),
+  dependency('vte-2.91-gtk4'),
+]
+
+shell_deps = [
+  dependency('gtk4-layer-shell-0'),
+  dependency('poppler-glib'),
+  dependency('gtksourceview-5'),
+  dependency('wayland-client'),
+  dependency('libnm', version: '>= 1.0.0'),
+  dependency('upower-glib', version: '>= 0.99.0'),
+  dependency('libpulse'),
+  dependency('libpulse-mainloop-glib'),
+  dependency('goa-1.0'),
+  dependency('goa-backend-1.0'),
+  dependency('polkit-gobject-1'),
+  dependency('gnome-desktop-4'),
+  dependency('libsoup-3.0'),
+  dependency('json-glib-1.0'),
+  dependency('libpeas-2'),
+  dependency('dbusmenu-glib-0.4'),
+  dependency('atspi-2'),
+  dependency('tracker-sparql-3.0'),
+  dependency('gudev-1.0'),
+]
+
+dependencies = core_deps + shell_deps
+cc = meson.get_compiler('c')
+polkit_agent_dep = cc.find_library('polkit-agent-1', dirs: ['/usr/lib/x86_64-linux-gnu', '/usr/lib'])
+gee_dep = dependency('gee-0.8')
+json_dep = dependency('json-glib-1.0')
+
+wayland_scanner = find_program('wayland-scanner')
+wl_proto_xml = 'protocols/wlr-foreign-toplevel-management-unstable-v1.xml'
+wl_proto_c = custom_target(
+  'wlr-foreign-toplevel-management-unstable-v1-protocol.c',
+  output: 'wlr-foreign-toplevel-management-unstable-v1-protocol.c',
+  input: wl_proto_xml,
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@']
+)
+wl_proto_h = custom_target(
+  'wlr-foreign-toplevel-management-unstable-v1-client-protocol.h',
+  output: 'wlr-foreign-toplevel-management-unstable-v1-client-protocol.h',
+  input: wl_proto_xml,
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@']
+)
+om_proto_xml = 'protocols/wlr-output-management-unstable-v1.xml'
+om_proto_c = custom_target(
+  'wlr-output-management-unstable-v1-protocol.c',
+  output: 'wlr-output-management-unstable-v1-protocol.c',
+  input: om_proto_xml,
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@']
+)
+om_proto_h = custom_target(
+  'wlr-output-management-unstable-v1-client-protocol.h',
+  output: 'wlr-output-management-unstable-v1-client-protocol.h',
+  input: om_proto_xml,
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@']
+)
+ws_proto_xml = 'protocols/ext-workspace-v1.xml'
+ws_proto_c = custom_target(
+  'ext-workspace-v1-protocol.c',
+  output: 'ext-workspace-v1-protocol.c',
+  input: ws_proto_xml,
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@']
+)
+ws_proto_h = custom_target(
+  'ext-workspace-v1-client-protocol.h',
+  output: 'ext-workspace-v1-client-protocol.h',
+  input: ws_proto_xml,
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@']
+)
+sp_proto_xml = 'protocols/singularity-preview-unstable-v1.xml'
+sp_proto_c = custom_target(
+  'singularity-preview-unstable-v1-protocol.c',
+  output: 'singularity-preview-unstable-v1-protocol.c',
+  input: sp_proto_xml,
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@']
+)
+sp_proto_h = custom_target(
+  'singularity-preview-unstable-v1-client-protocol.h',
+  output: 'singularity-preview-unstable-v1-client-protocol.h',
+  input: sp_proto_xml,
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@']
+)
+gc_proto_xml = 'protocols/wlr-gamma-control-unstable-v1.xml'
+gc_proto_c = custom_target(
+  'wlr-gamma-control-unstable-v1-protocol.c',
+  output: 'wlr-gamma-control-unstable-v1-protocol.c',
+  input: gc_proto_xml,
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@']
+)
+gc_proto_h = custom_target(
+  'wlr-gamma-control-unstable-v1-client-protocol.h',
+  output: 'wlr-gamma-control-unstable-v1-client-protocol.h',
+  input: gc_proto_xml,
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@']
+)
+st_proto_xml = 'protocols/singularity-tiling-unstable-v1.xml'
+st_proto_c = custom_target(
+  'singularity-tiling-unstable-v1-protocol.c',
+  output: 'singularity-tiling-unstable-v1-protocol.c',
+  input: st_proto_xml,
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@']
+)
+st_proto_h = custom_target(
+  'singularity-tiling-unstable-v1-client-protocol.h',
+  output: 'singularity-tiling-unstable-v1-client-protocol.h',
+  input: st_proto_xml,
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@']
+)
+sc_proto_xml = 'protocols/wlr-screencopy-unstable-v1.xml'
+sc_proto_c = custom_target(
+  'wlr-screencopy-unstable-v1-protocol.c',
+  output: 'wlr-screencopy-unstable-v1-protocol.c',
+  input: sc_proto_xml,
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@']
+)
+sc_proto_h = custom_target(
+  'wlr-screencopy-unstable-v1-client-protocol.h',
+  output: 'wlr-screencopy-unstable-v1-client-protocol.h',
+  input: sc_proto_xml,
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@']
+)
+xo_proto_xml = 'protocols/xdg-output-unstable-v1.xml'
+xo_proto_c = custom_target(
+  'xdg-output-unstable-v1-protocol.c',
+  output: 'xdg-output-unstable-v1-protocol.c',
+  input: xo_proto_xml,
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@']
+)
+xo_proto_h = custom_target(
+  'xdg-output-unstable-v1-client-protocol.h',
+  output: 'xdg-output-unstable-v1-client-protocol.h',
+  input: xo_proto_xml,
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@']
+)
+sb_proto_xml = 'protocols/singularity-blur-unstable-v1.xml'
+sb_proto_c = custom_target(
+  'singularity-blur-unstable-v1-protocol.c',
+  output: 'singularity-blur-unstable-v1-protocol.c',
+  input: sb_proto_xml,
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@']
+)
+sb_proto_h = custom_target(
+  'singularity-blur-unstable-v1-client-protocol.h',
+  output: 'singularity-blur-unstable-v1-client-protocol.h',
+  input: sb_proto_xml,
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@']
+)
+sl_proto_xml = 'protocols/ext-session-lock-v1.xml'
+sl_proto_c = custom_target(
+  'ext-session-lock-v1-protocol.c',
+  output: 'ext-session-lock-v1-protocol.c',
+  input: sl_proto_xml,
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@']
+)
+sl_proto_h = custom_target(
+  'ext-session-lock-v1-client-protocol.h',
+  output: 'ext-session-lock-v1-client-protocol.h',
+  input: sl_proto_xml,
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@']
+)
+
+libsingularity_dep = dependency('singularity-1.0',
+  fallback: ['libsingularity', 'libsingularity_dep']
+)
+if not meson.is_subproject() and libsingularity_dep.type_name() == 'internal'
+  libsingularity_vapi_dir = join_paths(meson.project_build_root(), 'subprojects', 'libsingularity')
+  add_project_arguments(['--vapidir=' + libsingularity_vapi_dir], language: 'vala')
+endif
+
+singularity_core_sources = files(
+    'src/components/panel/panel.vala',
+    'src/core/dbus_menu_adapter.vala',
+    'src/core/app_menu_registrar.vala',
+    'src/core/atspi_menu_provider.vala',
+    'src/core/gtk_actions_menu_provider.vala',
+    'src/core/app_system.vala',
+    'src/core/compositor_backend.vala',
+    'src/core/gamemode_manager.vala',
+    'src/core/system_monitor.vala',
+    'src/core/shared_clock.vala',
+    'src/core/preview_cache.vala',
+    'src/core/power_manager.vala',
+    'src/core/power_profiles_manager.vala',
+    'src/core/extreme_mode_manager.vala',
+    'src/core/wallpaper_manager.vala',
+    'src/core/nm_wrapper.vala',
+    'src/core/audio_manager.vala',
+    'src/core/brightness_manager.vala',
+    'src/core/kbd_brightness_manager.vala',
+    'src/core/night_light_manager.vala',
+    'src/core/shortcut_manager.vala',
+    'src/core/screenshot_portal.vala',
+    'src/core/screenshot_tool.vala',
+    'src/core/plugin_manager.vala',
+    'src/components/dock/dock.vala',
+    'src/components/dock/dock_resources.vala',
+    'src/components/dock/dock_dbus_service.vala',
+    'src/components/background/background.vala',
+    'src/components/sidebar/sidebar.vala',
+    'src/components/sidebar/settings_window.vala',
+    'src/components/sidebar/widgets/settings_widgets.vala',
+    'src/components/sidebar/widgets/developer_page.vala',
+    'src/components/preview/preview_dialog.vala',
+    'src/core/preview_manager.vala',
+    'src/components/desktop/desktop_icons.vala',
+    'src/components/notifications/notification_display.vala',
+    'src/components/notifications/notification_center.vala',
+    'src/core/notification_manager.vala',
+    'src/core/resource_monitor.vala',
+    'src/components/sidebar/views/system_view.vala',
+    'src/components/sidebar/views/power_confirm_dialog.vala',
+    'src/components/sidebar/views/settings_view.vala',
+    'src/components/sidebar/pages/network_page.vala',
+    'src/components/sidebar/pages/desktop_page.vala',
+    'src/components/sidebar/pages/sound_page.vala',
+    'src/components/sidebar/pages/keyboard_page.vala',
+    'src/components/sidebar/pages/accessibility_page.vala',
+    'src/components/sidebar/pages/apps_page.vala',
+    'src/components/sidebar/pages/app_details_page.vala',
+    'src/components/sidebar/pages/default_apps_page.vala',
+    'src/components/sidebar/pages/calendar_page.vala',
+    'src/components/sidebar/pages/notifications_page.vala',
+    'src/components/sidebar/pages/accounts_page.vala',
+    'src/components/sidebar/pages/system_page.vala',
+    'src/components/sidebar/pages/users_page.vala',
+    'src/components/sidebar/pages/plugins_page.vala',
+    'src/components/sidebar/pages/plugin_details_page.vala',
+    'src/components/sidebar/pages/performance_page.vala',
+    'src/core/users/accounts_service.vala',
+    'src/core/datetime_manager.vala',
+    'src/core/locale_manager.vala',
+    'src/core/bluetooth_manager.vala',
+    'src/core/display_manager.vala',
+    'src/core/hot_corner_manager.vala',
+    'src/core/monitor_osd.vala',
+    'src/core/debug_manager.vala',
+    'src/core/debug_hud_window.vala',
+    'src/core/shell_surface_host.vala',
+    'src/core/tiling_manager.vala',
+    'src/components/displays/monitor_preview.vala',
+    'src/components/sidebar/pages/displays_page.vala',
+    'src/components/sidebar/pages/datetime_page.vala',
+    'src/components/sidebar/pages/region_page.vala',
+    'src/components/sidebar/pages/bluetooth_page.vala',
+    'src/components/sidebar/pages/add_input_source_page.vala',
+    'src/components/sidebar/pages/add_account_page.vala',
+    'src/shared/widgets/password_dialog.vala',
+    'src/components/sidebar/pages/vpn_config_page.vala',
+    'src/shared/edit_themes.vala',
+    'src/components/calendar/calendar_view.vala',
+    'src/core/calendar/local_provider.vala',
+    'src/core/calendar/goa_provider.vala',
+    'src/core/session_manager.vala',
+    'src/core/session_recovery.vala',
+    'src/components/sidebar/views/session_restore_dialog.vala',
+    'src/components/overview/overview.vala',
+    'src/components/overview/app_menu.vala',
+    'src/components/overview/app_launcher_grid.vala',
+    'src/components/overview/app_folder_button.vala',
+    'src/components/overview/app_folder_overlay.vala',
+    'src/components/overview/search_result_row.vala',
+    'src/components/overview/workspace_overview.vala',
+    'src/components/run_dialog/run_dialog.vala',
+    'src/components/app_switcher/app_switcher.vala',
+    'src/core/search/search_manager.vala',
+    'src/core/search/providers/app_provider.vala',
+    'src/core/search/providers/file_search_provider.vala',
+    'src/core/search/providers/math_provider.vala',
+    'src/wayland/wayland_integration.c',
+    'src/wayland/wayland_integration.vapi',
+    'src/wayland/blur_surface.c',
+)
+
+subdir('src/lockscreen')
+
+executable('singularity-desktop',
+  sources: ['src/core/main.vala'] + singularity_core_sources + [
+    wl_proto_c, wl_proto_h, ws_proto_c, ws_proto_h, sp_proto_c, sp_proto_h, om_proto_c, om_proto_h, st_proto_c, st_proto_h, gc_proto_c, gc_proto_h, sb_proto_c, sb_proto_h
+  ],
+  dependencies: dependencies + [libsingularity_dep, gee_dep, json_dep, cc.find_library('m'), cc.find_library('crypt')],
+  include_directories: [
+    include_directories('src'),
+    include_directories('src/core'),
+    include_directories('src/components/background'),
+    include_directories('src/components/dock'),
+    include_directories('src/components/overview'),
+    include_directories('src/components/panel'),
+    include_directories('src/components/sidebar'),
+    include_directories('src/components/sidebar/widgets'),
+    include_directories('src/shared/widgets'),
+    include_directories('src/wayland'),
+    include_directories('.')
+  ],
+  export_dynamic: true,
+  install: true
+)
+
+executable('singularity-region-picker',
+  sources: ['src/tools/region-picker/main.vala'],
+  dependencies: dependencies,
+  install: true
+)
+executable('singularity-keyboard-reset',
+  sources: ['src/tools/keyboard-reset/main.vala'],
+  dependencies: dependencies,
+  install: true
+)
+executable('singularity-screenshot',
+  sources: ['src/tools/screenshot/main.c', sc_proto_c, sc_proto_h, xo_proto_c, xo_proto_h],
+  dependencies: [
+    dependency('wayland-client'),
+    dependency('libpng'),
+  ],
+  include_directories: [include_directories('.')],
+  install: true
+)

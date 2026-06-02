@@ -1,0 +1,409 @@
+using Gtk;
+using GtkLayerShell;
+
+namespace Singularity {
+
+    private class SwitcherGridItem : Box {
+        private AppSystem.Window win;
+        private Picture preview_img;
+        private Image fallback_icon;
+        private bool is_destroyed = false;
+        private void* _capture_token = null;
+
+        public SwitcherGridItem(AppSystem.Window win, bool selected) {
+            Object(orientation: Orientation.VERTICAL, spacing: 0);
+            this.win = win;
+
+            add_css_class("app-switcher-item");
+            if (selected) add_css_class("selected");
+            margin_top = 8;
+            margin_bottom = 8;
+            margin_start = 8;
+            margin_end = 8;
+
+            this.destroy.connect(on_destroy);
+            setup_ui();
+        }
+
+        private void on_destroy() {
+            is_destroyed = true;
+            if (_capture_token != null) {
+                void* tok = _capture_token;
+                _capture_token = null;
+                Singularity.wayland_cancel_capture(tok);
+            }
+        }
+
+        private void setup_ui() {
+            // Fixed-size clipping container for the thumbnail
+            var thumb_box = new Box(Orientation.VERTICAL, 0);
+            thumb_box.set_size_request(300, 200);
+            thumb_box.hexpand = false;
+            thumb_box.vexpand = false;
+            thumb_box.overflow = Overflow.HIDDEN;
+            thumb_box.add_css_class("switcher-thumbnail-box");
+
+            var overlay = new Overlay();
+            overlay.set_size_request(300, 200);
+            overlay.hexpand = false;
+            overlay.vexpand = false;
+
+            preview_img = new Picture();
+            preview_img.content_fit = ContentFit.COVER;
+            preview_img.hexpand = false;
+            preview_img.vexpand = false;
+            preview_img.set_size_request(300, 200);
+            preview_img.add_css_class("switcher-thumbnail");
+            overlay.set_child(preview_img);
+
+            // Fallback icon shown centered until capture succeeds
+            fallback_icon = new Image();
+            fallback_icon.pixel_size = 48;
+            if (win.gicon != null) fallback_icon.set_from_gicon(win.gicon);
+            else if (win.icon_name != null && win.icon_name != "") fallback_icon.icon_name = win.icon_name;
+            else fallback_icon.icon_name = "application-x-executable";
+            fallback_icon.halign = Align.CENTER;
+            fallback_icon.valign = Align.CENTER;
+            fallback_icon.add_css_class("switcher-thumbnail-fallback");
+            overlay.add_overlay(fallback_icon);
+
+            // Small icon overlaid at bottom-left
+            var small_icon = new Image();
+            small_icon.pixel_size = 24;
+            if (win.gicon != null) small_icon.set_from_gicon(win.gicon);
+            else if (win.icon_name != null && win.icon_name != "") small_icon.icon_name = win.icon_name;
+            else small_icon.icon_name = "application-x-executable";
+            small_icon.halign = Align.START;
+            small_icon.valign = Align.END;
+            small_icon.margin_start = 4;
+            small_icon.margin_bottom = 4;
+            small_icon.add_css_class("switcher-thumbnail-icon");
+            overlay.add_overlay(small_icon);
+
+            thumb_box.append(overlay);
+            append(thumb_box);
+
+            var label = new Label(sanitize_utf8(win.title ?? win.app_id ?? ""));
+            label.add_css_class("caption");
+            label.halign = Align.CENTER;
+            label.ellipsize = Pango.EllipsizeMode.END;
+            label.max_width_chars = 32;
+            label.width_request = 300;
+            label.margin_top = 4;
+            append(label);
+
+            capture_preview();
+        }
+
+        private void capture_preview() {
+            if (win.handle == null) return;
+
+            _capture_token = Singularity.wayland_capture_preview_cancellable(win.handle, (w, h, s, data) => {
+                _capture_token = null;
+                if (is_destroyed || data == null || w <= 0 || h <= 0 || s <= 0) return;
+
+                unowned uint8[] buf = (uint8[])data;
+                buf.length = h * s;
+                try {
+                    var texture = new Gdk.MemoryTexture(w, h, Gdk.MemoryFormat.B8G8R8A8_PREMULTIPLIED, new Bytes(buf), s);
+                    preview_img.set_paintable(texture);
+                    fallback_icon.visible = false;
+                } catch (Error e) {
+                }
+            });
+        }
+
+        private string sanitize_utf8(string? s) {
+            if (s == null || s == "") return "";
+            if (s.validate()) return s;
+            return s.make_valid();
+        }
+    }
+
+    public class AppSwitcher : Singularity.Shell.ShellDialog {
+        private Box outer_box;
+        private Box items_box;
+        private ScrolledWindow scroll;
+        private List<AppSystem.Window> windows;
+        private int selected_index = 0;
+        private GLib.Settings settings;
+        private bool _list_mode = true;
+
+        public AppSwitcher(Gtk.Application app) {
+            Object(
+                application: app,
+                anchor_top: true,
+                anchor_bottom: true,
+                anchor_left: true,
+                anchor_right: true
+            );
+
+            settings = new GLib.Settings("dev.sinty.desktop");
+            _list_mode = settings.get_string("switcher-style") != "grid";
+            settings.changed["switcher-style"].connect(() => {
+                _list_mode = settings.get_string("switcher-style") != "grid";
+                items_box.orientation = _list_mode ? Orientation.VERTICAL : Orientation.HORIZONTAL;
+                rebuild_ui();
+            });
+
+            set_keyboard_mode(this, GtkLayerShell.KeyboardMode.EXCLUSIVE);
+
+            default_width = 800;
+            default_height = 500;
+
+            add_css_class("app-switcher-window");
+
+            var click = new GestureClick();
+            click.pressed.connect((n, x, y) => {
+                double ox, oy;
+                outer_box.translate_coordinates(this, 0, 0, out ox, out oy);
+                int ow = outer_box.get_allocated_width();
+                int oh = outer_box.get_allocated_height();
+                if (x < ox || x > ox + ow || y < oy || y > oy + oh) dismiss();
+            });
+            ((Gtk.Widget)this).add_controller(click);
+
+            var key_ctrl = new EventControllerKey();
+            key_ctrl.key_pressed.connect(on_key_pressed);
+            key_ctrl.key_released.connect(on_key_released);
+            ((Gtk.Widget)this).add_controller(key_ctrl);
+
+            outer_box = new Box(Orientation.VERTICAL, 0);
+            outer_box.add_css_class("power-card");
+            outer_box.add_css_class("app-switcher-card");
+            outer_box.halign = Align.CENTER;
+            outer_box.valign = Align.CENTER;
+            outer_box.margin_top = 28;
+            outer_box.margin_bottom = 28;
+            outer_box.margin_start = 40;
+            outer_box.margin_end = 40;
+
+            scroll = new ScrolledWindow();
+            scroll.hscrollbar_policy = PolicyType.NEVER;
+            scroll.vscrollbar_policy = PolicyType.NEVER;
+            scroll.propagate_natural_width = false;
+            scroll.propagate_natural_height = false;
+            scroll.min_content_height = 120;
+            scroll.min_content_width = 320;
+            scroll.max_content_height = 500;
+            scroll.max_content_width = 900;
+
+            items_box = new Box(_list_mode ? Orientation.VERTICAL : Orientation.HORIZONTAL, 0);
+            items_box.add_css_class("app-switcher-items");
+            items_box.margin_top = 8;
+            items_box.margin_bottom = 8;
+            items_box.margin_start = 8;
+            items_box.margin_end = 8;
+
+            scroll.set_child(items_box);
+            outer_box.append(scroll);
+            content_box.append(outer_box);
+            hide();
+        }
+
+        private bool on_key_pressed(uint keyval, uint keycode, Gdk.ModifierType state) {
+            switch (keyval) {
+                case Gdk.Key.Tab:
+                case Gdk.Key.ISO_Left_Tab:
+                    if ((state & Gdk.ModifierType.SHIFT_MASK) != 0) cycle(-1);
+                    else cycle(1);
+                    return true;
+                case Gdk.Key.Return:
+                case Gdk.Key.KP_Enter:
+                    activate_selected();
+                    return true;
+                case Gdk.Key.Escape:
+                    dismiss();
+                    return true;
+            }
+            return false;
+        }
+
+        private void on_key_released(uint keyval, uint keycode, Gdk.ModifierType state) {
+            if (keyval == Gdk.Key.Alt_L || keyval == Gdk.Key.Alt_R ||
+                keyval == Gdk.Key.Meta_L || keyval == Gdk.Key.Meta_R) {
+                // Always activate on Alt release - the DBus round-trip overhead
+                // (~100-150 ms) means time-based thresholds cause premature dismissals.
+                activate_selected();
+            }
+        }
+
+        private void refresh_window_list() {
+            windows = AppSystem.get_default().get_mru_windows();
+            if (windows.length() == 0)
+                windows = AppSystem.get_default().get_windows();
+        }
+
+        private void rebuild_ui() {
+            while (items_box.get_first_child() != null)
+                items_box.remove(items_box.get_first_child());
+            if (windows.length() == 0) return;
+            int i = 0;
+            foreach (var win in windows) {
+                if (win == null) { i++; continue; }
+                int idx = i;
+                var item = _list_mode ? build_list_item(win, idx == selected_index)
+                                      : build_grid_item(win, idx == selected_index);
+                var c = new GestureClick();
+                c.pressed.connect((n, x, y) => { selected_index = idx; activate_selected(); });
+                item.add_controller(c);
+                items_box.append(item);
+                i++;
+            }
+            update_viewport_size();
+        }
+
+        private void update_viewport_size() {
+            int count = (int)windows.length();
+            if (_list_mode) {
+                scroll.set_size_request(360, int.min(500, int.max(120, count * 48 + 16)));
+            } else {
+                scroll.set_size_request(int.min(900, int.max(320, count * 332 + 16)), 260);
+            }
+        }
+
+        private Box build_list_item(AppSystem.Window win, bool selected) {
+            var box = new Box(Orientation.HORIZONTAL, 12);
+            box.add_css_class("app-switcher-item");
+            if (selected) box.add_css_class("selected");
+            box.margin_top = 2;
+            box.margin_bottom = 2;
+            box.margin_start = 6;
+            box.margin_end = 6;
+            box.width_request = 300;
+
+            var icon = make_icon(win, 32);
+            box.append(icon);
+
+            var label = new Label(sanitize_utf8(win.title ?? win.app_id ?? ""));
+            label.halign = Align.START;
+            label.hexpand = true;
+            label.ellipsize = Pango.EllipsizeMode.END;
+            label.max_width_chars = 40;
+            box.append(label);
+
+            return box;
+        }
+
+        private SwitcherGridItem build_grid_item(AppSystem.Window win, bool selected) {
+            return new SwitcherGridItem(win, selected);
+        }
+
+        private Image make_icon(AppSystem.Window win, int size) {
+            var icon = new Image();
+            icon.pixel_size = size;
+            if (win.gicon != null) icon.set_from_gicon(win.gicon);
+            else if (win.icon_name != null && win.icon_name != "") icon.icon_name = win.icon_name;
+            else icon.icon_name = "application-x-executable";
+            return icon;
+        }
+
+        private string sanitize_utf8(string? s) {
+            if (s == null || s == "") return "";
+            if (s.validate()) return s;
+            return s.make_valid();
+        }
+
+        private void cycle(int direction) {
+            if (windows.length() == 0) return;
+            int old = selected_index;
+            selected_index = ((selected_index + direction) + (int)windows.length()) % (int)windows.length();
+            update_selection(old, selected_index);
+        }
+
+        private void update_selection(int old_idx, int new_idx) {
+            var child = items_box.get_first_child();
+            int i = 0;
+            while (child != null) {
+                if (i == old_idx) child.remove_css_class("selected");
+                if (i == new_idx) {
+                    child.add_css_class("selected");
+                    scroll_selected_into_view(child);
+                }
+                child = child.get_next_sibling();
+                i++;
+            }
+        }
+
+        private void scroll_selected_into_view(Gtk.Widget item) {
+            var adj = _list_mode ? scroll.vadjustment : scroll.hadjustment;
+            Gtk.Allocation alloc;
+            item.get_allocation(out alloc);
+            int item_start = _list_mode ? alloc.y : alloc.x;
+            int item_size = _list_mode ? alloc.height : alloc.width;
+            int item_end = item_start + item_size;
+            int viewport_size = (int)adj.page_size;
+            if (item_start < (int)adj.value) {
+                adj.value = item_start;
+            } else if (item_end > (int)adj.value + viewport_size) {
+                adj.value = item_end - viewport_size;
+            }
+        }
+
+        private void activate_selected() {
+            if (windows.length() == 0) { dismiss(); return; }
+            var win = windows.nth_data(selected_index);
+            if (win == null) { dismiss(); return; }
+            if (win.handle != null)
+                Singularity.wayland_activate_window(win.handle);
+            dismiss();
+        }
+
+        private void dismiss() {
+            // Remove grid items first so SwitcherGridItem.on_destroy() cancels
+            // any in-flight captures before the window is hidden.
+            while (items_box.get_first_child() != null)
+                items_box.remove(items_box.get_first_child());
+            hide();
+        }
+
+        public void show_and_cycle_next() {
+            refresh_window_list();
+            if (windows.length() == 0) return;
+            if (!visible) {
+                anchor_to_focused_monitor();
+                selected_index = (int)windows.length() > 1 ? 1 : 0;
+                rebuild_ui();
+                opacity = 1;
+                present();
+            } else {
+                cycle(1);
+            }
+        }
+
+        public void show_and_cycle_prev() {
+            refresh_window_list();
+            if (windows.length() == 0) return;
+            if (!visible) {
+                anchor_to_focused_monitor();
+                selected_index = (int)windows.length() - 1;
+                rebuild_ui();
+                opacity = 1;
+                present();
+            } else {
+                cycle(-1);
+            }
+        }
+
+        private void anchor_to_focused_monitor() {
+            Gdk.Monitor? target_mon = null;
+            var focused = AppSystem.get_default().get_focused_window_handle();
+            if (focused != null) {
+                target_mon = Singularity.wayland_get_window_monitor(focused);
+            }
+            if (target_mon == null) {
+                target_mon = Singularity.Panel.find_primary_monitor();
+            }
+            if (target_mon != null) {
+                GtkLayerShell.set_monitor(this, target_mon);
+                var geom = target_mon.get_geometry();
+                int max_w = int.max(320, (int)(geom.width * 0.70));
+                int max_h = int.max(180, (int)(geom.height * 0.60));
+                default_width = int.min(800, max_w);
+                default_height = int.min(500, max_h);
+                scroll.max_content_width = default_width;
+                scroll.max_content_height = default_height;
+            }
+        }
+    }
+}

@@ -1,0 +1,230 @@
+using Gtk;
+using Singularity.Widgets;
+
+namespace Singularity.SidebarPages {
+
+    public class SystemPage : SettingsPage {
+        private SettingsView view;
+        private EntryRow hostname_row;
+
+        public SystemPage(SettingsView view) {
+            base(_("About"));
+            this.view = view;
+            back_clicked.connect(() => {
+                view.go_home();
+            });
+            build_ui();
+        }
+
+        private void build_ui() {
+            var logo_box = new Box(Orientation.VERTICAL, 12);
+            logo_box.margin_top = 24;
+            logo_box.margin_bottom = 24;
+            logo_box.halign = Align.CENTER;
+            var logo = new Image.from_icon_name("computer-symbolic");
+            logo.icon_name = get_distro_icon_name();
+            logo.pixel_size = 96;
+            logo.add_css_class("accent-color");
+            logo_box.append(logo);
+            add_widget(logo_box);
+            var device_group = new PreferencesGroup(_("Device Name"));
+            hostname_row = new EntryRow("Device Name");
+            hostname_row.text = GLib.Environment.get_host_name();
+            var apply_btn = new Button.from_icon_name("object-select-symbolic");
+            apply_btn.add_css_class("flat");
+            apply_btn.tooltip_text = _("Apply Hostname");
+            apply_btn.clicked.connect(apply_hostname);
+            hostname_row.add_suffix(apply_btn);
+            device_group.add_row(hostname_row);
+            add_group(device_group);
+            var hw_group = new PreferencesGroup(_("Hardware Information"));
+            hw_group.add_row(create_info_row("Model", get_hardware_model()));
+            hw_group.add_row(create_info_row("Memory", get_memory_info()));
+            hw_group.add_row(create_info_row("Processor", get_processor_info()));
+            hw_group.add_row(create_info_row("Graphics", get_graphics_info()));
+            hw_group.add_row(create_info_row("Disk Capacity", get_disk_info()));
+            add_group(hw_group);
+            var sw_group = new PreferencesGroup(_("Software Information"));
+            sw_group.add_row(create_info_row("Firmware Version", get_firmware_version()));
+            sw_group.add_row(create_info_row("OS Name", get_os_name()));
+            sw_group.add_row(create_info_row("OS Type", sizeof(void*) == 8 ? "64-bit" : "32-bit"));
+            sw_group.add_row(create_info_row("Singularity Desktop", SingularityApp.VERSION));
+            sw_group.add_row(create_info_row("Windowing System", "Wayland"));
+            sw_group.add_row(create_info_row("Kernel Version", get_kernel_version()));
+            add_group(sw_group);
+            var preview_group = new PreferencesGroup(_("Experimental"));
+            var settings = new GLib.Settings("dev.sinty.desktop");
+            bool preview_enabled = settings.get_boolean("preview-features-enabled");
+            var preview_row = new SwitchRow(_("Preview Features"), _("Enable experimental features like Auto-Tiling"), preview_enabled);
+            settings.bind("preview-features-enabled", preview_row.switch_btn, "active", SettingsBindFlags.DEFAULT);
+            preview_group.add_row(preview_row);
+            var dev_row = new SwitchRow(_("Developer Mode"), _("Show the Developer settings page"), settings.get_boolean("developer-mode"));
+            settings.bind("developer-mode", dev_row.switch_btn, "active", SettingsBindFlags.DEFAULT);
+            preview_group.add_row(dev_row);
+            add_group(preview_group);
+        }
+
+        private Widget create_info_row(string title, string value) {
+            var row = new ActionRow(title);
+            var val_label = new Label(value);
+            val_label.add_css_class("dim-label");
+            val_label.selectable = true;
+            row.add_suffix(val_label);
+            return row;
+        }
+
+        private void apply_hostname() {
+            string new_name = hostname_row.text.strip();
+            if (new_name != "" && new_name != GLib.Environment.get_host_name())
+                set_hostname_async.begin(new_name);
+        }
+
+        // Set the static hostname through systemd-hostnamed over the system bus.
+        // interactive=true lets the polkit agent prompt for authorization, which
+        // hostnamed handles itself; setting the static name also updates the
+        // transient (kernel) hostname.
+        private async void set_hostname_async(string new_name) {
+            try {
+                var conn = yield Bus.get(BusType.SYSTEM);
+                yield conn.call(
+                    "org.freedesktop.hostname1",
+                    "/org/freedesktop/hostname1",
+                    "org.freedesktop.hostname1",
+                    "SetStaticHostname",
+                    new Variant("(sb)", new_name, true),
+                    null, DBusCallFlags.NONE, -1, null);
+            } catch (Error e) {
+                warning("Failed to set hostname: %s", e.message);
+            }
+        }
+
+        private string get_distro_icon_name() {
+            string? logo_icon = null;
+            string? distro_id = null;
+            try {
+                string content;
+                FileUtils.get_contents("/etc/os-release", out content);
+                foreach (string line in content.split("\n")) {
+                    if (line.has_prefix("LOGO=")) {
+                        logo_icon = line.substring(5).replace("\"", "").strip();
+                    } else if (line.has_prefix("ID=")) {
+                        distro_id = line.substring(3).replace("\"", "").strip();
+                    }
+                }
+            } catch (Error e) {}
+            // Prefer the explicit LOGO field from os-release.
+            var icon_theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default());
+            if (logo_icon != null && logo_icon != "" && icon_theme.has_icon(logo_icon)) {
+                return logo_icon;
+            }
+            // Fall back to the distro ID as an icon name.
+            if (distro_id != null && distro_id != "" && icon_theme.has_icon(distro_id)) {
+                return distro_id;
+            }
+            // Last resort: Singularity emblem or generic computer icon.
+            if (icon_theme.has_icon("emblem-singularity")) {
+                return "emblem-singularity";
+            }
+            return "computer-symbolic";
+        }
+
+        private string get_os_name() {
+            try {
+                string content;
+                FileUtils.get_contents("/etc/os-release", out content);
+                foreach (string line in content.split("\n")) {
+                    if (line.has_prefix("PRETTY_NAME=")) {
+                        return line.split("=")[1].replace("\"", "");
+                    }
+                }
+            } catch (Error e) {}
+            return "Linux";
+        }
+
+        private string get_hardware_model() {
+            try {
+                string content;
+                if (FileUtils.get_contents("/sys/devices/virtual/dmi/id/product_name", out content)) {
+                    return content.strip();
+                }
+            } catch (Error e) {}
+            return "Unknown Model";
+        }
+
+        private string get_processor_info() {
+            try {
+                string content;
+                FileUtils.get_contents("/proc/cpuinfo", out content);
+                foreach (string line in content.split("\n")) {
+                    if (line.has_prefix("model name")) {
+                        string model = line.split(":")[1].strip();
+                        return model;
+                    }
+                }
+            } catch (Error e) {}
+            return "Unknown Processor";
+        }
+
+        private string get_memory_info() {
+            try {
+                string content;
+                FileUtils.get_contents("/proc/meminfo", out content);
+                foreach (string line in content.split("\n")) {
+                    if (line.has_prefix("MemTotal:")) {
+                        string val = line.split(":")[1].strip().split(" ")[0]; // kB
+                        int64 kb = int64.parse(val);
+                        return "%.1f GiB".printf(kb / 1024.0 / 1024.0);
+                    }
+                }
+            } catch (Error e) {}
+            return "Unknown Memory";
+        }
+
+        private string get_disk_info() {
+            try {
+                var file = File.new_for_path("/");
+                var info = file.query_filesystem_info(FileAttribute.FILESYSTEM_SIZE, null);
+                uint64 size = info.get_attribute_uint64(FileAttribute.FILESYSTEM_SIZE);
+                return "%.1f GB".printf(size / 1000.0 / 1000.0 / 1000.0);
+            } catch (Error e) {}
+            return "Unknown";
+        }
+
+        private string get_kernel_version() {
+            try {
+                string content;
+                FileUtils.get_contents("/proc/version", out content);
+                return content.split(" ")[2];
+            } catch (Error e) {}
+            return "Unknown";
+        }
+
+        private string get_firmware_version() {
+            try {
+                string content;
+                if (FileUtils.get_contents("/sys/class/dmi/id/bios_version", out content)) {
+                    return content.strip();
+                }
+            } catch (Error e) {}
+            return "Unknown";
+        }
+
+        private string get_graphics_info() {
+            // Try to find a GPU vendor/device
+            // This is very rudimentary.
+            try {
+                // Check for Intel/AMD/Nvidia in lspci output if available?
+                // Or check /sys/class/drm/card0/device/vendor
+                string vendor_id;
+                if (FileUtils.get_contents("/sys/class/drm/card0/device/vendor", out vendor_id)) {
+                    vendor_id = vendor_id.strip();
+                    if (vendor_id == "0x8086") return "Intel Graphics";
+                    if (vendor_id == "0x10de") return "NVIDIA Graphics";
+                    if (vendor_id == "0x1002") return "AMD Graphics";
+                    return "Unknown GPU (" + vendor_id + ")";
+                }
+            } catch (Error e) {}
+            return "Unknown Graphics";
+        }
+    }
+}

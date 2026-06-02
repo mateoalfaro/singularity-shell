@@ -1,0 +1,374 @@
+using Gtk;
+using Gdk;
+using Singularity;
+
+namespace Singularity {
+
+    public class DisplayManager : Object {
+        private static DisplayManager? _instance;
+        public struct Mode {
+            public int width;
+            public int height;
+            public int refresh;
+            public bool preferred;
+        }
+        public class Monitor : Object {
+            public string name;
+            public string description;
+            public string make;
+            public string model;
+            public string serial;
+            public int phys_width;
+            public int phys_height;
+            public int x;
+            public int y;
+            public double scale;
+            public int transform;
+            public bool enabled;
+            public bool vrr_supported { get; set; default = false; }
+            public bool vrr_enabled { get; set; default = false; }
+            public List<Mode?> modes;
+            public Mode? current_mode;
+            public void* head_handle;
+
+            public Monitor(void* handle) {
+                this.head_handle = handle;
+                this.modes = new List<Mode?>();
+                this.scale = 1.0;
+                this.enabled = true;
+            }
+        }
+        private List<Monitor> monitors;
+        public string shell_monitor_name { get; set; default = ""; }
+        public signal void monitors_changed();
+        private uint32 serial;
+        private bool _first_serial = true;
+
+        public static DisplayManager get_default() {
+            if (_instance == null) {
+                _instance = new DisplayManager();
+            }
+            return _instance;
+        }
+
+        private DisplayManager() {
+            monitors = new List<Monitor>();
+        }
+
+        public void handle_add_head(void* head_handle) {
+            var monitor = new Monitor(head_handle);
+            monitors.append(monitor);
+            monitors_changed();
+        }
+        [CCode (cname = "singularity_display_manager_add_head")]
+        public static void add_head_c(void* head_handle) {
+            get_default().handle_add_head(head_handle);
+        }
+
+        public void handle_update_head_info(void* head_handle, string? make, string? model, string? serial) {
+             foreach (var m in monitors) {
+                if (m.head_handle == head_handle) {
+                    if (make != null) m.make = make;
+                    if (model != null) m.model = model;
+                    if (serial != null) m.serial = serial;
+                    monitors_changed();
+                    return;
+                }
+            }
+        }
+        [CCode (cname = "singularity_display_manager_update_head_info")]
+        public static void update_head_info_c(void* head_handle, string? make, string? model, string? serial) {
+            get_default().handle_update_head_info(head_handle, make, model, serial);
+        }
+
+        public void handle_update_head(void* head_handle, string? name, string? description, int phys_w, int phys_h, int x, int y, int transform, double scale, bool enabled) {
+            foreach (var m in monitors) {
+                if (m.head_handle == head_handle) {
+                    if (name != null) m.name = name;
+                    if (description != null) m.description = description;
+                    m.phys_width = phys_w;
+                    m.phys_height = phys_h;
+                    m.x = x;
+                    m.y = y;
+                    m.transform = transform;
+                    m.scale = scale;
+                    m.enabled = enabled;
+                    monitors_changed();
+                    return;
+                }
+            }
+        }
+        [CCode (cname = "singularity_display_manager_update_head")]
+        public static void update_head_c(void* head_handle, string? name, string? description, int phys_w, int phys_h, int x, int y, int transform, double scale, int enabled) {
+            get_default().handle_update_head(head_handle, name, description, phys_w, phys_h, x, y, transform, scale, enabled != 0);
+        }
+
+        public void handle_add_mode(void* head_handle, int width, int height, int refresh, bool preferred) {
+             foreach (var m in monitors) {
+                if (m.head_handle == head_handle) {
+                    Mode mode = Mode() { width = width, height = height, refresh = refresh, preferred = preferred };
+                    m.modes.append(mode);
+                    if (preferred && m.current_mode == null) {
+                        m.current_mode = mode;
+                    }
+                    return;
+                }
+            }
+        }
+        [CCode (cname = "singularity_display_manager_add_mode")]
+        public static void add_mode_c(void* head_handle, int width, int height, int refresh, int preferred) {
+            get_default().handle_add_mode(head_handle, width, height, refresh, preferred != 0);
+        }
+
+        public void handle_set_current_mode(void* head_handle, int width, int height, int refresh) {
+            foreach (var m in monitors) {
+                if (m.head_handle == head_handle) {
+                    foreach (var mode in m.modes) {
+                        if (mode.width == width && mode.height == height && mode.refresh == refresh) {
+                            m.current_mode = mode;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        [CCode (cname = "singularity_display_manager_set_current_mode")]
+        public static void set_current_mode_c(void* head_handle, int width, int height, int refresh) {
+            get_default().handle_set_current_mode(head_handle, width, height, refresh);
+        }
+
+        public void handle_remove_head(void* head_handle) {
+            Monitor? found = null;
+            foreach (var m in monitors) {
+                if (m.head_handle == head_handle) {
+                    found = m;
+                    break;
+                }
+            }
+            if (found != null) {
+                monitors.remove(found);
+                monitors_changed();
+            }
+        }
+        [CCode (cname = "singularity_display_manager_remove_head")]
+        public static void remove_head_c(void* head_handle) {
+            get_default().handle_remove_head(head_handle);
+        }
+
+        public void handle_adaptive_sync_changed(void* head_handle, uint32 state) {
+            foreach (var m in monitors) {
+                if (m.head_handle == head_handle) {
+                    m.vrr_supported = true;
+                    m.vrr_enabled = (state == 1);
+                    monitors_changed();
+                    return;
+                }
+            }
+        }
+        [CCode (cname = "singularity_display_manager_update_adaptive_sync")]
+        public static void update_adaptive_sync_c(void* head_handle, uint32 state) {
+            get_default().handle_adaptive_sync_changed(head_handle, state);
+        }
+
+        public void handle_set_serial(uint32 s) {
+            this.serial = s;
+            if (_first_serial) {
+                _first_serial = false;
+                // Delay slightly so all modes/heads are fully populated
+                Timeout.add(200, () => {
+                    load_and_apply_saved();
+                    return false;
+                });
+            }
+        }
+        [CCode (cname = "singularity_display_manager_set_serial")]
+        public static void set_serial_c(uint32 s) {
+            get_default().handle_set_serial(s);
+        }
+
+        public unowned List<Monitor> get_monitors() {
+            return monitors;
+        }
+
+        private string config_path() {
+            return GLib.Path.build_filename(GLib.Environment.get_user_config_dir(), "singularity", "displays.json");
+        }
+
+        private string transform_name(int t) {
+            switch (t) {
+                case 1: return "90";
+                case 2: return "180";
+                case 3: return "270";
+                case 4: return "flipped";
+                case 5: return "flipped-90";
+                case 6: return "flipped-180";
+                case 7: return "flipped-270";
+                default: return "normal";
+            }
+        }
+
+        // Write labwc output.xml so positions survive compositor restart
+
+        private void save_labwc_output_xml() {
+            var xml = new StringBuilder();
+            xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<outputs>\n");
+            foreach (var m in monitors) {
+                int mw = m.current_mode != null ? m.current_mode.width : 0;
+                int mh = m.current_mode != null ? m.current_mode.height : 0;
+                int mr = m.current_mode != null ? m.current_mode.refresh : 0;
+                xml.append_printf("  <output name=\"%s\">\n", m.name ?? "");
+                xml.append_printf("    <mode width=\"%d\" height=\"%d\" refresh=\"%d\"/>\n", mw, mh, mr);
+                xml.append_printf("    <position x=\"%d\" y=\"%d\"/>\n", m.x, m.y);
+                xml.append_printf("    <scale>%.4f</scale>\n", m.scale);
+                xml.append_printf("    <transform>%s</transform>\n", transform_name(m.transform));
+                xml.append_printf("    <enabled>%s</enabled>\n", m.enabled ? "yes" : "no");
+                xml.append_printf("    <adaptiveSync>%s</adaptiveSync>\n", m.vrr_enabled ? "yes" : "no");
+                xml.append("  </output>\n");
+            }
+            xml.append("</outputs>\n");
+            // Output positions are picked up by labwc on its next start, so this
+            // only writes the file (no live reconfigure).
+            if (Singularity.Compositor.LabwcBackend.get_default().write_config("output.xml", xml.str)) {
+                message("DisplayManager: saved labwc output.xml");
+            }
+        }
+
+        // Save JSON config for our own startup-apply
+
+        public void save_configuration() {
+            try {
+                string dir = GLib.Path.build_filename(GLib.Environment.get_user_config_dir(), "singularity");
+                GLib.DirUtils.create_with_parents(dir, 0755);
+                var builder = new Json.Builder();
+                builder.begin_object();
+                builder.set_member_name("shell_monitor");
+                builder.add_string_value(shell_monitor_name);
+                builder.set_member_name("monitors");
+                builder.begin_array();
+                foreach (var m in monitors) {
+                    builder.begin_object();
+                    builder.set_member_name("name"); builder.add_string_value(m.name ?? "");
+                    builder.set_member_name("x"); builder.add_int_value(m.x);
+                    builder.set_member_name("y"); builder.add_int_value(m.y);
+                    builder.set_member_name("scale"); builder.add_double_value(m.scale);
+                    builder.set_member_name("transform"); builder.add_int_value(m.transform);
+                    builder.set_member_name("enabled"); builder.add_boolean_value(m.enabled);
+                    builder.set_member_name("vrr_enabled"); builder.add_boolean_value(m.vrr_enabled);
+                    if (m.current_mode != null) {
+                        builder.set_member_name("mode_w"); builder.add_int_value(m.current_mode.width);
+                        builder.set_member_name("mode_h"); builder.add_int_value(m.current_mode.height);
+                        builder.set_member_name("mode_r"); builder.add_int_value(m.current_mode.refresh);
+                    }
+                    builder.end_object();
+                }
+                builder.end_array();
+                builder.end_object();
+                var gen = new Json.Generator();
+                gen.set_root(builder.get_root());
+                gen.pretty = true;
+                gen.to_file(config_path());
+                message("DisplayManager: config saved to %s", config_path());
+            } catch (GLib.Error e) {
+                warning("DisplayManager: save failed: %s", e.message);
+            }
+            save_labwc_output_xml();
+        }
+
+        // Load saved positions and apply them at startup
+
+        public void load_and_apply_saved() {
+            string path = config_path();
+            if (!GLib.FileUtils.test(path, GLib.FileTest.EXISTS)) return;
+            try {
+                var parser = new Json.Parser();
+                parser.load_from_file(path);
+                var root = parser.get_root();
+                if (root == null) {
+                    warning("DisplayManager: malformed config");
+                    return;
+                }
+                Json.Array arr;
+                // Support both old (array) and new (object with "monitors" key) format
+                if (root.get_node_type() == Json.NodeType.OBJECT) {
+                    var root_obj = root.get_object();
+                    if (root_obj.has_member("shell_monitor")) {
+                        shell_monitor_name = root_obj.get_string_member("shell_monitor");
+                    }
+                    if (!root_obj.has_member("monitors")) {
+                        warning("DisplayManager: malformed config (no monitors key)");
+                        return;
+                    }
+                    arr = root_obj.get_array_member("monitors");
+                } else if (root.get_node_type() == Json.NodeType.ARRAY) {
+                    arr = root.get_array();
+                } else {
+                    warning("DisplayManager: malformed config");
+                    return;
+                }
+                foreach (var node in arr.get_elements()) {
+                    if (node.get_node_type() != Json.NodeType.OBJECT) continue;
+                    var obj = node.get_object();
+                    if (!obj.has_member("name")) continue;
+                    string name = obj.get_string_member("name");
+                    foreach (var m in monitors) {
+                        if (m.name == name) {
+                            m.x = (int)obj.get_int_member("x");
+                            m.y = (int)obj.get_int_member("y");
+                            m.scale = obj.get_double_member("scale");
+                            m.transform = (int)obj.get_int_member("transform");
+                            m.enabled = obj.get_boolean_member("enabled");
+                            if (obj.has_member("vrr_enabled")) m.vrr_enabled = obj.get_boolean_member("vrr_enabled");
+                            if (obj.has_member("mode_w")) {
+                                int mw = (int)obj.get_int_member("mode_w");
+                                int mh = (int)obj.get_int_member("mode_h");
+                                int mr = (int)obj.get_int_member("mode_r");
+                                foreach (var mode in m.modes) {
+                                    if (mode.width == mw && mode.height == mh && mode.refresh == mr) {
+                                        m.current_mode = mode;
+                                        break;
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+                message("DisplayManager: loaded saved config from %s", path);
+                apply_configuration();
+            } catch (GLib.Error e) {
+                warning("DisplayManager: load failed: %s", e.message);
+            }
+        }
+
+        public void apply_configuration() {
+            Singularity.wayland_begin_output_config(serial);
+            foreach (var m in monitors) {
+                int mode_w = 0;
+                int mode_h = 0;
+                int mode_r = 0;
+                if (m.current_mode != null) {
+                    mode_w = m.current_mode.width;
+                    mode_h = m.current_mode.height;
+                    mode_r = m.current_mode.refresh;
+                }
+                int vrr = m.vrr_supported ? (m.vrr_enabled ? 1 : 0) : 2;
+                Singularity.wayland_config_head_v2(m.head_handle, m.enabled ? 1 : 0, m.x, m.y, m.scale, m.transform, mode_w, mode_h, mode_r, vrr);
+            }
+            Singularity.wayland_finish_output_config();
+        }
+
+        public Monitor? get_shell_monitor() {
+            if (shell_monitor_name == "") return null;
+            foreach (var m in monitors) {
+                if (m.name == shell_monitor_name) return m;
+            }
+            return null;
+        }
+
+        public void apply_shell_monitor() {
+            var settings = new GLib.Settings("dev.sinty.desktop");
+            settings.set_string("shell-monitor", shell_monitor_name);
+            save_configuration();
+        }
+    }
+}

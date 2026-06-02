@@ -1,0 +1,256 @@
+using Gtk;
+using GtkLayerShell;
+using GLib;
+
+namespace Singularity {
+
+    public class AppMenu : Gtk.Window {
+        private AppLauncherGrid launcher_grid;
+        private AppLauncherGrid? widgets_grid = null;
+        private Singularity.Widgets.Carousel? carousel = null;
+        private Singularity.Widgets.SearchEntry search_entry;
+        private SearchManager search_manager;
+        private ListBox search_results_list;
+        private Stack content_stack;
+        private ScrolledWindow grid_scrolled;
+        private ScrolledWindow? widgets_scrolled = null;
+        private ScrolledWindow search_scrolled;
+        private GLib.Settings settings;
+        private Box main_box;
+        private Singularity.Animation.TimedAnimation? menu_animation;
+
+        public signal void shown();
+        public signal void hidden();
+
+        public AppMenu(Gtk.Application app) {
+            Object(application: app, decorated: false);
+            search_manager = SearchManager.get_default();
+            settings = new GLib.Settings("dev.sinty.desktop");
+
+            init_for_window(this);
+            set_layer(this, GtkLayerShell.Layer.TOP);
+            set_keyboard_mode(this, GtkLayerShell.KeyboardMode.ON_DEMAND);
+
+            // The window itself carries the visual style (rounded box with blur),
+            // matching how Sidebar works - compositor handles alpha at corners correctly.
+            add_css_class("singularity");
+            add_css_class("singularity-shell");
+            add_css_class("app-menu-window");
+
+            // Menu-mode is meant to feel like a compact popup window
+            // (think settings sidebar): roughly square, anchored to
+            // the side where its launcher button lives. The 2-column
+            // grid keeps the row count manageable; users with many
+            // pinned apps scroll vertically.
+            set_default_size(340, 620);
+
+            // Close when clicking outside (window loses focus). The
+            // developer "Keep Overview Open" toggle pins the menu in
+            // place for screenshots / inspection.
+            notify["is-active"].connect(() => {
+                if (visible && !is_active
+                    && !Singularity.DebugManager.get_default().overview_pinned)
+                    toggle();
+            });
+
+            // Outer wrapper with a small margin so the inner card's
+            // drop shadow has room to render outside the visible card
+            // edge without being clipped.
+            var outer = new Box(Orientation.VERTICAL, 0);
+            outer.margin_top    = 12;
+            outer.margin_bottom = 12;
+            outer.margin_start  = 12;
+            outer.margin_end    = 12;
+            set_child(outer);
+
+            main_box = new Box(Orientation.VERTICAL, 0);
+            main_box.overflow = Overflow.HIDDEN;
+            main_box.add_css_class("app-menu-card");
+            main_box.hexpand = true;
+            main_box.vexpand = true;
+            outer.append(main_box);
+
+            search_entry = new Singularity.Widgets.SearchEntry();
+            search_entry.placeholder_text = _("Search...");
+            search_entry.margin_top = 12;
+            search_entry.margin_bottom = 8;
+            search_entry.margin_start = 12;
+            search_entry.margin_end = 12;
+            search_entry.hexpand = true;
+            search_entry.search_changed.connect(on_search_changed);
+            main_box.append(search_entry);
+
+            content_stack = new Stack();
+            content_stack.transition_type = StackTransitionType.CROSSFADE;
+            content_stack.vexpand = true;
+            main_box.append(content_stack);
+
+            // Two-page Carousel: apps on page 0, widgets on page 1
+            // (only shown when there are any). Horizontal scroll /
+            // swipe pages between them; dots underneath indicate count
+            // and current position.
+            carousel = new Singularity.Widgets.Carousel();
+            carousel.transition_duration = 220;
+            carousel.hexpand = true;
+            carousel.vexpand = true;
+
+            // Apps page: 4-column compact grid, apps only.
+            grid_scrolled = new ScrolledWindow();
+            grid_scrolled.vexpand = true;
+            grid_scrolled.hscrollbar_policy = PolicyType.NEVER;
+            launcher_grid = new AppLauncherGrid(app, 48, 3, 10);
+            launcher_grid.kind_filter = AppLauncherGrid.Kind.APPS_ONLY;
+            launcher_grid.on_app_launched = () => { toggle(); };
+            grid_scrolled.set_child(launcher_grid);
+            carousel.append_page(grid_scrolled);
+
+            // Widgets page: separate grid with their natural footprint,
+            // so widget content doesn't blow up the app cells.
+            widgets_scrolled = new ScrolledWindow();
+            widgets_scrolled.vexpand = true;
+            widgets_scrolled.hscrollbar_policy = PolicyType.NEVER;
+            widgets_grid = new AppLauncherGrid(app, 64, 2, 12);
+            widgets_grid.kind_filter = AppLauncherGrid.Kind.WIDGETS_ONLY;
+            widgets_grid.fill_horizontally = true;
+            widgets_grid.on_app_launched = () => { toggle(); };
+            widgets_scrolled.set_child(widgets_grid);
+            carousel.append_page(widgets_scrolled);
+
+            content_stack.add_named(carousel, "grid");
+
+            // Search
+            search_scrolled = new ScrolledWindow();
+            search_scrolled.vexpand = true;
+            search_scrolled.hscrollbar_policy = PolicyType.NEVER;
+            search_results_list = new ListBox();
+            search_results_list.add_css_class("search-results-list");
+            search_scrolled.set_child(search_results_list);
+            content_stack.add_named(search_scrolled, "search");
+
+            search_results_list.row_activated.connect((row) => {
+                var res_row = row as SearchResultRow;
+                if (res_row != null) {
+                    res_row.result.activate();
+                    toggle();
+                }
+            });
+
+            search_manager.results_updated.connect(update_search_results);
+
+            var key_controller = new EventControllerKey();
+            key_controller.key_pressed.connect((keyval, keycode, state) => {
+                if (keyval == Gdk.Key.Escape) {
+                    toggle();
+                    return true;
+                }
+                return false;
+            });
+            ((Gtk.Widget)this).add_controller(key_controller);
+
+            hide();
+        }
+
+        private void update_anchor() {
+            string pos    = settings.get_string("dock-position");
+            string style  = settings.get_string("dock-style");
+            string align  = settings.get_string("dock-alignment");
+            bool fusion   = settings.get_boolean("panel-fusion");
+
+            set_anchor(this, GtkLayerShell.Edge.BOTTOM, false);
+            set_anchor(this, GtkLayerShell.Edge.TOP, false);
+            set_anchor(this, GtkLayerShell.Edge.LEFT, false);
+            set_anchor(this, GtkLayerShell.Edge.RIGHT, false);
+
+            // The menu always drops DOWN from the top of the screen
+            // when the launcher button lives in the topbar or in the
+            // fused panel (both are at the top). When the dock is at
+            // the bottom and runs separately, the menu rises above it.
+            bool launcher_at_top = fusion || pos == "top";
+            if (launcher_at_top) {
+                set_anchor(this, GtkLayerShell.Edge.TOP, true);
+                set_margin(this, GtkLayerShell.Edge.TOP, 8);
+            } else {
+                set_anchor(this, GtkLayerShell.Edge.BOTTOM, true);
+                set_margin(this, GtkLayerShell.Edge.BOTTOM, 8);
+            }
+
+            // Horizontal: stick to the side where the launcher button
+            // sits, so the menu pops out under that button instead of
+            // floating somewhere disconnected.
+            //   - panel-fusion: the apps button is always at the start
+            //     of the panel (left edge).
+            //   - panel + start/end alignment: anchor matches.
+            //   - panel + center: compositor centers.
+            //   - floating: compositor centers.
+            if (fusion) {
+                set_anchor(this, GtkLayerShell.Edge.LEFT, true);
+                set_margin(this, GtkLayerShell.Edge.LEFT, 8);
+            } else if (style == "panel") {
+                if (align == "end") {
+                    set_anchor(this, GtkLayerShell.Edge.RIGHT, true);
+                    set_margin(this, GtkLayerShell.Edge.RIGHT, 8);
+                } else if (align != "center") {
+                    set_anchor(this, GtkLayerShell.Edge.LEFT, true);
+                    set_margin(this, GtkLayerShell.Edge.LEFT, 8);
+                }
+            }
+        }
+
+        private void on_search_changed(Singularity.Widgets.SearchEntry entry) {
+            string query = entry.text.strip();
+            if (query == "") {
+                content_stack.visible_child_name = "grid";
+            } else {
+                content_stack.visible_child_name = "search";
+                search_manager.query.begin(query);
+            }
+        }
+
+        private void update_search_results(List<SearchResult> results) {
+            Widget? child = search_results_list.get_first_child();
+            while (child != null) {
+                search_results_list.remove(child);
+                child = search_results_list.get_first_child();
+            }
+            foreach (var res in results) {
+                search_results_list.append(new SearchResultRow(res));
+            }
+        }
+
+        public void toggle() {
+            if (visible) {
+                if (menu_animation != null) menu_animation.skip();
+                menu_animation = new Singularity.Animation.TimedAnimation(
+                    this, 1, 0, 140,
+                    Singularity.Animation.TimedAnimation.Easing.EASE_IN_CUBIC
+                );
+                menu_animation.tick.connect(() => { opacity = menu_animation.value; });
+                menu_animation.done.connect(() => {
+                    hide();
+                    launcher_grid.depopulate();
+                    if (widgets_grid != null) widgets_grid.depopulate();
+                    hidden();
+                });
+                menu_animation.play();
+            } else {
+                update_anchor();
+                search_entry.text = "";
+                content_stack.visible_child_name = "grid";
+                opacity = 0;
+                present();
+                launcher_grid.populate();
+                if (widgets_grid != null) widgets_grid.populate();
+                if (carousel != null) carousel.scroll_to_index(0, false);
+                if (menu_animation != null) menu_animation.skip();
+                menu_animation = new Singularity.Animation.TimedAnimation(
+                    this, 0, 1, 190,
+                    Singularity.Animation.TimedAnimation.Easing.EASE_OUT_CUBIC
+                );
+                menu_animation.tick.connect(() => { opacity = menu_animation.value; });
+                menu_animation.play();
+                search_entry.grab_focus();
+                shown();
+            }
+        }
+    }
+}

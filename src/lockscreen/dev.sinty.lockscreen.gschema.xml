@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="dev.sinty.lockscreen" path="/dev/sinty/lockscreen/">
+    <key name="lock-enabled" type="b">
+      <default>true</default>
+      <summary>Lock Enabled</summary>
+      <description>Whether the screen lock is enabled.</description>
+    </key>
+    <key name="idle-delay" type="i">
+      <default>300</default>
+      <summary>Idle Delay</summary>
+      <description>Number of seconds of inactivity before the screen locks. 0 means never auto-lock.</description>
+    </key>
+    <key name="lock-on-suspend" type="b">
+      <default>true</default>
+      <summary>Lock on Suspend</summary>
+      <description>Whether to lock the screen when the system suspends.</description>
+    </key>
+  </schema>
+</schemalist>
