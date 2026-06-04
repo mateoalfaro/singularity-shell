@@ -286,8 +286,10 @@ namespace Singularity.SidebarPages {
             }
         }
 
-        private Gtk.Button make_corner_button(string key, string[] labels, string[] values,
-                                              GLib.Settings s, Gtk.Align halign, Gtk.Align valign) {
+        private Gtk.Button make_corner_button(string key, GLib.Settings s,
+                                              Gtk.Align halign, Gtk.Align valign) {
+            string[] labels = { "None", "Workspaces", "Overview", "Settings" };
+            string[] values = { "none", "workspaces", "overview", "settings" };
             string current = s.get_string(key);
             var btn = new Gtk.Button();
             btn.add_css_class("flat");
@@ -343,8 +345,6 @@ namespace Singularity.SidebarPages {
 
             var corners_row = new PreferencesRow();
 
-            string[] action_labels = { "None", "Workspaces", "Overview", "Settings" };
-            string[] action_values = { "none", "workspaces", "overview", "settings" };
             var s = new GLib.Settings("dev.sinty.desktop");
 
             // Outer container
@@ -376,10 +376,10 @@ namespace Singularity.SidebarPages {
             overlay.add_overlay(center);
 
             // Four corner buttons
-            var tl = make_corner_button("hot-corner-top-left",     action_labels, action_values, s, Gtk.Align.START, Gtk.Align.START);
-            var tr = make_corner_button("hot-corner-top-right",    action_labels, action_values, s, Gtk.Align.END,   Gtk.Align.START);
-            var bl = make_corner_button("hot-corner-bottom-left",  action_labels, action_values, s, Gtk.Align.START, Gtk.Align.END);
-            var br = make_corner_button("hot-corner-bottom-right", action_labels, action_values, s, Gtk.Align.END,   Gtk.Align.END);
+            var tl = make_corner_button("hot-corner-top-left",     s, Gtk.Align.START, Gtk.Align.START);
+            var tr = make_corner_button("hot-corner-top-right",    s, Gtk.Align.END,   Gtk.Align.START);
+            var bl = make_corner_button("hot-corner-bottom-left",  s, Gtk.Align.START, Gtk.Align.END);
+            var br = make_corner_button("hot-corner-bottom-right", s, Gtk.Align.END,   Gtk.Align.END);
 
             tl.margin_top = 6;    tl.margin_start = 6;
             tr.margin_top = 6;    tr.margin_end   = 6;
