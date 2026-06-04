@@ -712,8 +712,34 @@ namespace Singularity {
             }
         }
 
+        private int _atspi_usable = -1;
+
+        private bool atspi_bus_usable() {
+            if (_atspi_usable >= 0) return _atspi_usable == 1;
+            _atspi_usable = 0;
+            try {
+                var bus = GLib.Bus.get_sync(BusType.SESSION);
+                var reply = bus.call_sync(
+                    "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress",
+                    null, new VariantType("(s)"), DBusCallFlags.NONE, 1000, null);
+                string addr;
+                reply.get("(s)", out addr);
+                if (addr == null || addr.length == 0) return false;
+                var conn = new DBusConnection.for_address_sync(addr,
+                    DBusConnectionFlags.AUTHENTICATION_CLIENT | DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
+                    null, null);
+                conn.close_sync(null);
+                _atspi_usable = 1;
+            } catch (Error e) {
+                warning("AT-SPI bus not usable, disabling menu scan: %s", e.message);
+                _atspi_usable = 0;
+            }
+            return _atspi_usable == 1;
+        }
+
         private void try_atspi(int gen, string safe_id, SimpleActionGroup group) {
             if (menu_generation != gen) return;
+            if (!atspi_bus_usable()) return;
             // Skip AT-SPI scan for Chrome/Chromium - they have huge accessibility
             // trees, don't expose a menu bar via AT-SPI, and scanning them races
             // across threads causing crashes.
