@@ -46,7 +46,9 @@ namespace Singularity {
             snap_btn.clicked.connect(() => {
                 hide_sidebar();
                 var app = (Gtk.Application) GLib.Application.get_default();
-                Singularity.ScreenshotTool.get_default(app).present();
+                var tool = Singularity.ScreenshotTool.get_default(app);
+                if (!tool.ensure_screenshots()) return;
+                tool.present();
             });
             var settings_btn = new Button.from_icon_name("emblem-system-symbolic");
             settings_btn.has_frame = false;

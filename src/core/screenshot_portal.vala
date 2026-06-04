@@ -22,6 +22,25 @@ namespace Singularity {
             }
         }
 
+        public bool is_available() {
+            if (connection == null) return false;
+            try {
+                var res = connection.call_sync(
+                    "org.freedesktop.DBus",
+                    "/org/freedesktop/DBus",
+                    "org.freedesktop.DBus",
+                    "NameHasOwner",
+                    new Variant("(s)", "org.freedesktop.portal.Desktop"),
+                    new VariantType("(b)"),
+                    DBusCallFlags.NONE, -1, null);
+                bool owned;
+                res.get("(b)", out owned);
+                return owned;
+            } catch (Error e) {
+                return false;
+            }
+        }
+
         public async void take_screenshot(bool interactive = true) {
             if (connection == null) {
                 screenshot_failed("No D-Bus connection");

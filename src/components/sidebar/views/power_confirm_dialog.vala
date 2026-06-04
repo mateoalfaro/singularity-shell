@@ -49,6 +49,8 @@ namespace Singularity {
             desc_label.add_css_class("dim-label");
             desc_label.add_css_class("body");
             desc_label.wrap = true;
+            desc_label.wrap_mode = Pango.WrapMode.WORD_CHAR;
+            desc_label.max_width_chars = 48;
             desc_label.justify = Justification.CENTER;
             box.append(desc_label);
 

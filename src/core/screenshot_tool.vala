@@ -39,6 +39,11 @@ namespace Singularity {
             setup_styles();
             add_css_class("screenshot-tool");
 
+            ScreenshotPortal.get_default().screenshot_failed.connect((err) => {
+                if (err.down().contains("cancel")) return;
+                _show_unavailable_dialog();
+            });
+
             // Same surface as every other shell dialog: the ShellDialog window
             // is transparent, the visible card is a `.dialog-card` child, and a
             // gutter around it (SHADOW_MARGIN = 20px) leaves room for its shadow.
@@ -312,6 +317,7 @@ namespace Singularity {
         }
 
         private void dispatch_capture() {
+            if (!ensure_screenshots()) return;
             if (_pending_region) {
                 _do_region();
             } else if (_pending_window) {
@@ -319,6 +325,34 @@ namespace Singularity {
             } else {
                 _do_fullscreen();
             }
+        }
+
+        public bool ensure_screenshots() {
+            if (!ScreenshotPortal.get_default().is_available()) {
+                _show_unavailable_dialog();
+                return false;
+            }
+            return true;
+        }
+
+        private void _show_unavailable_dialog() {
+            var app = application as Gtk.Application;
+            if (app == null) return;
+            hide();
+            new PowerConfirmDialog(
+                app,
+                _("Screenshots unavailable"),
+                "camera-photo-symbolic",
+                _("Singularity could not capture a screenshot. The screenshot service is not available in this session. This usually means you are not running inside the Singularity session, or xdg-desktop-portal-singularity is not installed. See the documentation for details."),
+                _("Open documentation"),
+                () => {
+                    try {
+                        AppInfo.launch_default_for_uri("https://sinty.dev/docs/troubleshooting/", null);
+                    } catch (Error e) {
+                        warning("[ScreenshotTool] could not open docs: %s", e.message);
+                    }
+                }
+            ).open_dialog();
         }
 
         private void _do_fullscreen() {
