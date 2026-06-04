@@ -356,7 +356,6 @@ namespace Singularity {
             if (fs) {
                 set_exclusive_zone(this, 0);
                 set_layer(this, GtkLayerShell.Layer.BACKGROUND);
-                this.visible = false;
             } else {
                 update_visibility();
             }
