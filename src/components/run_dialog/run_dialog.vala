@@ -19,7 +19,7 @@ namespace Singularity {
 
         private void update_hint() {
             hint.label = dev_mode()
-                ? "r = restart shell, c = restart compositor, n = nested test, Up/Down = history, ESC = close"
+                ? "r = restart shell, c = reload compositor config, n = nested test, Up/Down = history, ESC = close"
                 : "r = restart shell, Up/Down = history, ESC = close";
         }
 
