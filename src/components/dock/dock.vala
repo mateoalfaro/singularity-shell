@@ -520,6 +520,19 @@ namespace Singularity {
                     set_exclusive_zone(this, 0);
                 }
             }
+
+            if (_hidden) {
+                if (_edge_poll_id == 0) _start_edge_poll(_dock_edge());
+            } else {
+                _stop_edge_poll();
+            }
+        }
+
+        private GtkLayerShell.Edge _dock_edge() {
+            string pos = _settings.get_string("dock-position");
+            if (pos == "left") return GtkLayerShell.Edge.LEFT;
+            if (pos == "right") return GtkLayerShell.Edge.RIGHT;
+            return GtkLayerShell.Edge.BOTTOM;
         }
 
         private bool is_any_window_maximized_on_my_monitor() {
