@@ -341,6 +341,9 @@ namespace Singularity {
             app_sys.any_fullscreen_changed.connect(() => {
                 update_fullscreen_mode();
             });
+            app_sys.window_focused.connect(() => {
+                update_fullscreen_mode();
+            });
             update_visibility();
             update_flat_mode();
             update_topbar_fg_class();
@@ -350,7 +353,7 @@ namespace Singularity {
 
         private void update_fullscreen_mode() {
             if (is_greeter_mode) return;
-            bool fs = AppSystem.get_default().has_any_fullscreen_window();
+            bool fs = AppSystem.get_default().is_focused_window_fullscreen();
             if (fs == _hidden_for_fullscreen) return;
             _hidden_for_fullscreen = fs;
             if (fs) {

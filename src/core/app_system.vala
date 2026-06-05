@@ -310,6 +310,15 @@ namespace Singularity {
             return false;
         }
 
+        public bool is_focused_window_fullscreen() {
+            if (current_focused_window_handle == null) return false;
+            foreach (var win in windows) {
+                if (win.handle == current_focused_window_handle)
+                    return win.is_fullscreen;
+            }
+            return false;
+        }
+
         private static void on_workspace_created(void* handle, string name, void* data) {
             var self = (AppSystem)data;
             foreach (var ws in self.workspaces) {
@@ -448,7 +457,9 @@ namespace Singularity {
 
         public void notify_desktop_focused() {
             current_focused_app_id = "";
+            current_focused_window_handle = null;
             app_focused(null);
+            window_focused(null);
             update_menu_model("");
         }
 

@@ -178,7 +178,10 @@ namespace Singularity {
             _sig_apps_changed = app_system.apps_changed.connect(schedule_refresh);
             _sig_running_apps_changed = app_system.running_apps_changed.connect(schedule_refresh);
             _sig_app_focused = app_system.app_focused.connect(update_active_app);
-            _sig_window_focused = app_system.window_focused.connect(update_active_window);
+            _sig_window_focused = app_system.window_focused.connect((handle) => {
+                update_active_window(handle);
+                update_fullscreen_mode();
+            });
             _sig_pulse_app = app_system.pulse_app_requested.connect(pulse_app_icon);
 
             _sig_any_maximized = app_system.any_maximized_changed.connect(() => {
@@ -685,7 +688,7 @@ namespace Singularity {
         }
 
         private void update_fullscreen_mode() {
-            bool fs = app_system.has_any_fullscreen_window();
+            bool fs = app_system.is_focused_window_fullscreen();
             if (fs == _hidden_for_fullscreen) return;
             _hidden_for_fullscreen = fs;
             if (fs) {
