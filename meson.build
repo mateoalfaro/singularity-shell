@@ -3,6 +3,7 @@ project('singularity-shell', ['vala', 'c'],
   default_options: ['buildtype=release', 'strip=true'],
 )
 add_project_arguments('-DGETTEXT_PACKAGE="singularity-desktop"', language: 'c')
+add_project_arguments('-D_GNU_SOURCE', language: 'c')
 add_project_arguments('-DGOA_API_IS_SUBJECT_TO_CHANGE', language: 'c')
 add_project_arguments('-DGOA_BACKEND_COMPILATION', language: 'c')
 add_project_arguments([
