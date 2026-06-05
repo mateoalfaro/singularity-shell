@@ -149,14 +149,18 @@ namespace Singularity {
             scrolled_window = new ScrolledWindow();
             scrolled_window.hscrollbar_policy = PolicyType.NEVER;
             scrolled_window.vscrollbar_policy = PolicyType.AUTOMATIC;
+            scrolled_window.overlay_scrolling = false;
             content_stack.add_named(scrolled_window, "grid");
 
             var grid_container = new Box(Orientation.VERTICAL, 0);
             grid_container.margin_top = 40;
             grid_container.margin_bottom = 100;
+            grid_container.margin_start = 12;
+            grid_container.margin_end = 12;
             scrolled_window.set_child(grid_container);
 
             launcher_grid = new AppLauncherGrid(app, 64, 8, 16);
+            launcher_grid.column_slot = 232;
             launcher_grid.on_app_launched = () => { toggle(); };
             grid_container.append(launcher_grid);
 
@@ -349,6 +353,17 @@ namespace Singularity {
                         search_entry.margin_top = panel_h + 12;
                     }
                 }
+                Gdk.Monitor? grid_mon = GtkLayerShell.get_monitor(this);
+                if (grid_mon == null) {
+                    var d = Gdk.Display.get_default();
+                    if (d != null && d.get_monitors().get_n_items() > 0)
+                        grid_mon = d.get_monitors().get_item(0) as Gdk.Monitor;
+                }
+                if (grid_mon != null) {
+                    Gdk.Rectangle gg = grid_mon.get_geometry();
+                    launcher_grid.set_columns_for_width(gg.width - 48);
+                }
+
                 // Start invisible, present (map surface), then animate in.
                 opacity = 0;
                 set_layer(this, GtkLayerShell.Layer.TOP);

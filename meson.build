@@ -285,6 +285,7 @@ singularity_core_sources = files(
     'src/components/overview/app_menu.vala',
     'src/components/overview/app_launcher_grid.vala',
     'src/components/overview/app_folder_button.vala',
+    'src/components/overview/app_menu_list.vala',
     'src/components/overview/app_folder_overlay.vala',
     'src/components/overview/search_result_row.vala',
     'src/components/overview/workspace_overview.vala',

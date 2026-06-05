@@ -50,15 +50,18 @@ namespace Singularity {
             new GLib.GenericArray<Gtk.Widget>();
         private AppSystem app_system;
         private Gtk.Application gtk_app;
-        private int icon_size;
+        public int icon_size;
         private int columns;
+        public int max_columns = 0;
+        public int column_slot = 0;
+        private int _last_avail = 0;
         // Fixed cell footprint - every item gets its size_request set to
         // (cell_w * w, cell_h * h) so column/row widths stay predictable
         // regardless of what's inside (icons, folders, widgets). Without
         // this, a wider widget or a slightly larger folder button would
         // blow up the cell for the whole column.
-        private int cell_w;
-        private int cell_h;
+        public int cell_w;
+        public int cell_h;
 
         // When non-null, the widget with this instance_id renders in
         // "resize mode" (edge/corner handles visible, dim outline).
@@ -90,8 +93,8 @@ namespace Singularity {
             // Single-cell footprint. Width hugs the icon; height includes
             // room for the label (~28px) and a small padding. Keep this
             // tight - anything taller bloats every row across the grid.
-            cell_w = icon_size + 12;
-            cell_h = icon_size + 16;
+            cell_w = icon_size + 136;
+            cell_h = icon_size + 136;
 
             grid = new Gtk.Grid();
             grid.row_spacing = spacing;
@@ -103,9 +106,11 @@ namespace Singularity {
             // When the host opts into fill_horizontally we re-align
             // the grid to FILL + hexpand so cells stretch across the
             // full scroll width instead of clustering in the middle.
+            this.halign = Align.CENTER;
             notify["fill-horizontally"].connect(() => {
                 grid.halign  = fill_horizontally ? Align.FILL : Align.CENTER;
                 grid.hexpand = fill_horizontally;
+                this.halign  = fill_horizontally ? Align.FILL : Align.CENTER;
             });
             grid.column_homogeneous = true;
 
@@ -114,10 +119,11 @@ namespace Singularity {
                 grid.column_spacing = 8;
                 grid.row_spacing = 8;
                 cell_w = icon_size + 6;
-                cell_h = icon_size + 14;
+                cell_h = icon_size + 26;
             }
 
             _grid_overlay = new Gtk.Overlay();
+            _grid_overlay.halign = Align.CENTER;
             _grid_overlay.set_child(grid);
             append(_grid_overlay);
 
@@ -181,6 +187,20 @@ namespace Singularity {
                 return false;
             });
             add_controller(key);
+        }
+
+        public void set_columns_for_width(int avail) {
+            if (avail <= 0) return;
+            _last_avail = avail;
+            int sp = (int) grid.column_spacing;
+            int slot = column_slot > 0 ? column_slot : (cell_w + sp);
+            int t = avail / slot;
+            if (t < 2) t = 2;
+            if (max_columns > 0 && t > max_columns) t = max_columns;
+            if (t != columns) {
+                columns = t;
+                if (get_mapped()) populate();
+            }
         }
 
         private bool _needs_repopulate = true;
@@ -273,8 +293,8 @@ namespace Singularity {
             public override void measure(Gtk.Orientation orientation, int for_size,
                                          out int minimum, out int natural,
                                          out int minimum_baseline, out int natural_baseline) {
-                minimum = 0;
                 natural = (orientation == Gtk.Orientation.HORIZONTAL) ? _fw : _fh;
+                minimum = natural;
                 minimum_baseline = -1;
                 natural_baseline = -1;
             }
@@ -325,11 +345,9 @@ namespace Singularity {
                 child.set_data<string>("grid-key", key);
                 int fw = cell_w * w + spacing_col * (w - 1);
                 int fh = cell_h * h + spacing_row * (h - 1);
-                if (key.has_prefix("widget:")) {
-                    var capped = new FixedCell(child, fw, fh);
-                    capped.set_data<string>("grid-key", key);
-                    child = capped;
-                }
+                var capped = new FixedCell(child, fw, fh);
+                capped.set_data<string>("grid-key", key);
+                child = capped;
                 child.width_request  = fw;
                 child.height_request = fh;
                 if (fill_horizontally) child.hexpand = true;
@@ -808,7 +826,7 @@ namespace Singularity {
 
         // Folder / app buttons (unchanged behaviour)
         private AppFolderButton create_folder_button(string folder_id) {
-            var fb = new AppFolderButton(folder_id, icon_size);
+            var fb = new AppFolderButton(folder_id, icon_size, cell_w, cell_h);
 
             fb.clicked.connect((fid) => {
                 var ov = _folder_overlays.lookup(fid);
@@ -832,6 +850,11 @@ namespace Singularity {
             var btn = new Button();
             btn.add_css_class("app-grid-item");
             btn.has_frame = false;
+            btn.hexpand = true;
+            btn.vexpand = true;
+            btn.halign = Align.FILL;
+            btn.valign = Align.FILL;
+            btn.set_size_request(cell_w, cell_h);
 
             var box = new Box(Orientation.VERTICAL, icon_size < 64 ? 6 : 12);
             box.halign = Align.CENTER;
@@ -859,7 +882,7 @@ namespace Singularity {
             box.append(img);
 
             var label = new Label(app.get_name());
-            label.max_width_chars = 12;
+            label.max_width_chars = 11;
             label.ellipsize = Pango.EllipsizeMode.END;
             label.wrap = false;
             label.xalign = 0.5f;

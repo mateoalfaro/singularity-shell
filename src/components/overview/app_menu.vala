@@ -5,14 +5,13 @@ using GLib;
 namespace Singularity {
 
     public class AppMenu : Gtk.Window {
-        private AppLauncherGrid launcher_grid;
+        private AppMenuList app_list;
         private AppLauncherGrid? widgets_grid = null;
         private Singularity.Widgets.Carousel? carousel = null;
         private Singularity.Widgets.SearchEntry search_entry;
         private SearchManager search_manager;
         private ListBox search_results_list;
         private Stack content_stack;
-        private ScrolledWindow grid_scrolled;
         private ScrolledWindow? widgets_scrolled = null;
         private ScrolledWindow search_scrolled;
         private GLib.Settings settings;
@@ -94,15 +93,11 @@ namespace Singularity {
             carousel.hexpand = true;
             carousel.vexpand = true;
 
-            // Apps page: 4-column compact grid, apps only.
-            grid_scrolled = new ScrolledWindow();
-            grid_scrolled.vexpand = true;
-            grid_scrolled.hscrollbar_policy = PolicyType.NEVER;
-            launcher_grid = new AppLauncherGrid(app, 40, 5, 8);
-            launcher_grid.kind_filter = AppLauncherGrid.Kind.APPS_ONLY;
-            launcher_grid.on_app_launched = () => { toggle(); };
-            grid_scrolled.set_child(launcher_grid);
-            carousel.append_page(grid_scrolled);
+            // Apps page: alphabetical address-book style list with sticky
+            // letter sections, not reorderable.
+            app_list = new AppMenuList(32);
+            app_list.on_app_launched = () => { toggle(); };
+            carousel.append_page(app_list);
 
             // Widgets page: separate grid with their natural footprint,
             // so widget content doesn't blow up the app cells.
@@ -165,8 +160,7 @@ namespace Singularity {
 
             int max_h = geo.height - 120;
             if (max_h < 240) max_h = int.max(200, geo.height - 24);
-            grid_scrolled.propagate_natural_height = true;
-            grid_scrolled.max_content_height = max_h;
+            app_list.set_max_height(max_h);
             if (widgets_scrolled != null) {
                 widgets_scrolled.propagate_natural_height = true;
                 widgets_scrolled.max_content_height = max_h;
@@ -245,6 +239,8 @@ namespace Singularity {
         }
 
         public void toggle() {
+            if (visible && Singularity.DebugManager.get_default().overview_pinned)
+                return;
             if (visible) {
                 if (menu_animation != null) menu_animation.skip();
                 menu_animation = new Singularity.Animation.TimedAnimation(
@@ -254,7 +250,6 @@ namespace Singularity {
                 menu_animation.tick.connect(() => { opacity = menu_animation.value; });
                 menu_animation.done.connect(() => {
                     hide();
-                    launcher_grid.depopulate();
                     if (widgets_grid != null) widgets_grid.depopulate();
                     hidden();
                 });
@@ -266,7 +261,7 @@ namespace Singularity {
                 content_stack.visible_child_name = "grid";
                 opacity = 0;
                 present();
-                launcher_grid.populate();
+                app_list.populate();
                 if (widgets_grid != null) widgets_grid.populate();
                 if (carousel != null) carousel.scroll_to_index(0, false);
                 if (menu_animation != null) menu_animation.skip();

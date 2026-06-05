@@ -14,7 +14,7 @@ namespace Singularity {
         public signal void clicked(string folder_id);
         public signal void drop_app(string folder_id, string app_id);
 
-        public AppFolderButton(string folder_id, int icon_size = 64) {
+        public AppFolderButton(string folder_id, int icon_size = 64, int cell_w = 0, int cell_h = 0) {
             Object(orientation: Orientation.VERTICAL, spacing: 0);
             this.folder_id = folder_id;
             this.icon_size = icon_size;
@@ -23,6 +23,11 @@ namespace Singularity {
             btn = new Button();
             btn.add_css_class("app-grid-item");
             btn.has_frame = false;
+            btn.hexpand = true;
+            btn.vexpand = true;
+            btn.halign = Align.FILL;
+            btn.valign = Align.FILL;
+            if (cell_w > 0 && cell_h > 0) btn.set_size_request(cell_w, cell_h);
 
             var box = new Box(Orientation.VERTICAL, icon_size < 64 ? 6 : 12);
             box.halign = Align.CENTER;
@@ -51,7 +56,7 @@ namespace Singularity {
             box.append(comp);
 
             name_label = new Label(get_folder_name());
-            name_label.max_width_chars = 12;
+            name_label.max_width_chars = 11;
             name_label.ellipsize = Pango.EllipsizeMode.END;
             name_label.wrap = false;
             name_label.xalign = 0.5f;
