@@ -98,7 +98,7 @@ namespace Singularity {
             grid_scrolled = new ScrolledWindow();
             grid_scrolled.vexpand = true;
             grid_scrolled.hscrollbar_policy = PolicyType.NEVER;
-            launcher_grid = new AppLauncherGrid(app, 48, 3, 10);
+            launcher_grid = new AppLauncherGrid(app, 40, 5, 8);
             launcher_grid.kind_filter = AppLauncherGrid.Kind.APPS_ONLY;
             launcher_grid.on_app_launched = () => { toggle(); };
             grid_scrolled.set_child(launcher_grid);
@@ -148,6 +148,33 @@ namespace Singularity {
             ((Gtk.Widget)this).add_controller(key_controller);
 
             hide();
+        }
+
+        private void apply_monitor_sizing() {
+            Gdk.Monitor? mon = GtkLayerShell.get_monitor(this);
+            if (mon == null) {
+                var dsp = Gdk.Display.get_default();
+                if (dsp != null && dsp.get_monitors().get_n_items() > 0)
+                    mon = dsp.get_monitors().get_item(0) as Gdk.Monitor;
+            }
+            if (mon == null) return;
+            Gdk.Rectangle geo = mon.get_geometry();
+
+            int target_w = int.min(340, geo.width - 24);
+            main_box.set_size_request(target_w, -1);
+
+            int max_h = geo.height - 120;
+            if (max_h < 240) max_h = int.max(200, geo.height - 24);
+            grid_scrolled.propagate_natural_height = true;
+            grid_scrolled.max_content_height = max_h;
+            if (widgets_scrolled != null) {
+                widgets_scrolled.propagate_natural_height = true;
+                widgets_scrolled.max_content_height = max_h;
+            }
+            if (search_scrolled != null) {
+                search_scrolled.propagate_natural_height = true;
+                search_scrolled.max_content_height = max_h;
+            }
         }
 
         private void update_anchor() {
@@ -234,6 +261,7 @@ namespace Singularity {
                 menu_animation.play();
             } else {
                 update_anchor();
+                apply_monitor_sizing();
                 search_entry.text = "";
                 content_stack.visible_child_name = "grid";
                 opacity = 0;

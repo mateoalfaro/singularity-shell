@@ -6,7 +6,7 @@ namespace Singularity {
     public class AppFolderButton : Box {
         private AppSystem app_system;
         private string folder_id;
-        private Grid preview_grid;
+        private int icon_size;
         private Gtk.Image[] preview_images;
         private Label name_label;
         private Button btn;
@@ -14,55 +14,50 @@ namespace Singularity {
         public signal void clicked(string folder_id);
         public signal void drop_app(string folder_id, string app_id);
 
-        public AppFolderButton(string folder_id) {
+        public AppFolderButton(string folder_id, int icon_size = 64) {
             Object(orientation: Orientation.VERTICAL, spacing: 0);
             this.folder_id = folder_id;
+            this.icon_size = icon_size;
             app_system = AppSystem.get_default();
 
-            btn = new Button();            btn.add_css_class("app-grid-item");
-            btn.add_css_class("folder-button");
+            btn = new Button();
+            btn.add_css_class("app-grid-item");
             btn.has_frame = false;
 
-            var inner = new Box(Orientation.VERTICAL, 6);
-            inner.halign = Align.CENTER;
-            inner.valign = Align.CENTER;
+            var box = new Box(Orientation.VERTICAL, icon_size < 64 ? 6 : 12);
+            box.halign = Align.CENTER;
+            box.valign = Align.CENTER;
 
-            // 2x2 icon preview grid inside a rounded box
-            var preview_box = new Box(Orientation.VERTICAL, 0);
-            preview_box.add_css_class("folder-button-box");
-            preview_box.set_size_request(72, 72);
-            preview_box.halign = Align.CENTER;
-            preview_box.valign = Align.CENTER;
+            var comp = new Grid();
+            comp.add_css_class("folder-icon");
+            comp.halign = Align.CENTER;
+            comp.valign = Align.CENTER;
+            comp.set_size_request(icon_size, icon_size);
+            comp.overflow = Overflow.HIDDEN;
 
-            preview_grid = new Grid();
-            preview_grid.halign = Align.CENTER;
-            preview_grid.valign = Align.CENTER;
-            preview_grid.column_spacing = 4;
-            preview_grid.row_spacing = 4;
-            preview_grid.margin_start = 8;
-            preview_grid.margin_end = 8;
-            preview_grid.margin_top = 8;
-            preview_grid.margin_bottom = 8;
+            int gap = int.max(2, icon_size / 16);
+            int mini = (icon_size - gap) / 2;
+            if (mini < 8) mini = 8;
+            comp.column_spacing = gap;
+            comp.row_spacing = gap;
 
             preview_images = new Gtk.Image[4];
             for (int i = 0; i < 4; i++) {
                 preview_images[i] = new Gtk.Image();
-                preview_images[i].pixel_size = 24;
+                preview_images[i].pixel_size = mini;
                 preview_images[i].icon_name = "application-x-executable-symbolic";
-                preview_grid.attach(preview_images[i], i % 2, i / 2, 1, 1);
+                comp.attach(preview_images[i], i % 2, i / 2, 1, 1);
             }
-
-            preview_box.append(preview_grid);
-            inner.append(preview_box);
+            box.append(comp);
 
             name_label = new Label(get_folder_name());
-            name_label.add_css_class("folder-button-label");
             name_label.max_width_chars = 12;
             name_label.ellipsize = Pango.EllipsizeMode.END;
+            name_label.wrap = false;
             name_label.xalign = 0.5f;
-            inner.append(name_label);
+            box.append(name_label);
 
-            btn.set_child(inner);
+            btn.set_child(box);
             append(btn);
 
             btn.clicked.connect(() => this.clicked(folder_id));
@@ -81,7 +76,7 @@ namespace Singularity {
             drop.leave.connect(() => btn.remove_css_class("drag-over"));
             btn.add_controller(drop);
 
-            // Drag source: drag folder itself (prefix folder:)
+            // Drag source: drag the folder itself (folder: prefix)
             var drag = new DragSource();
             drag.actions = Gdk.DragAction.MOVE;
             drag.prepare.connect((x, y) => {

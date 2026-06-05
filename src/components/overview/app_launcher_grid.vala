@@ -90,8 +90,8 @@ namespace Singularity {
             // Single-cell footprint. Width hugs the icon; height includes
             // room for the label (~28px) and a small padding. Keep this
             // tight - anything taller bloats every row across the grid.
-            cell_w = icon_size + 24;
-            cell_h = icon_size + 32;
+            cell_w = icon_size + 12;
+            cell_h = icon_size + 16;
 
             grid = new Gtk.Grid();
             grid.row_spacing = spacing;
@@ -111,10 +111,10 @@ namespace Singularity {
 
             if (icon_size < 64) {
                 add_css_class("menu-mode");
-                grid.column_spacing = 15;
-                grid.row_spacing = 15;
-                cell_w = icon_size + 16;
-                cell_h = icon_size + 24;
+                grid.column_spacing = 8;
+                grid.row_spacing = 8;
+                cell_w = icon_size + 6;
+                cell_h = icon_size + 14;
             }
 
             _grid_overlay = new Gtk.Overlay();
@@ -260,6 +260,33 @@ namespace Singularity {
                 start_widget_jobs();
         }
 
+        private class FixedCell : Gtk.Widget {
+            private Gtk.Widget? _child;
+            private int _fw;
+            private int _fh;
+            public FixedCell(Gtk.Widget child, int fw, int fh) {
+                _fw = fw; _fh = fh;
+                _child = child;
+                _child.set_parent(this);
+                set_overflow(Gtk.Overflow.HIDDEN);
+            }
+            public override void measure(Gtk.Orientation orientation, int for_size,
+                                         out int minimum, out int natural,
+                                         out int minimum_baseline, out int natural_baseline) {
+                minimum = 0;
+                natural = (orientation == Gtk.Orientation.HORIZONTAL) ? _fw : _fh;
+                minimum_baseline = -1;
+                natural_baseline = -1;
+            }
+            public override void size_allocate(int width, int height, int baseline) {
+                if (_child != null) _child.allocate(width, height, baseline, null);
+            }
+            public override void dispose() {
+                if (_child != null) { _child.unparent(); _child = null; }
+                base.dispose();
+            }
+        }
+
         // Place up to `count` of the remaining ordered items into the grid.
         private void build_batch(int count) {
             int done = 0;
@@ -296,8 +323,15 @@ namespace Singularity {
                         _occ[(row + dr) * columns + (col + dc)] = true;
 
                 child.set_data<string>("grid-key", key);
-                child.width_request  = cell_w * w + spacing_col * (w - 1);
-                child.height_request = cell_h * h + spacing_row * (h - 1);
+                int fw = cell_w * w + spacing_col * (w - 1);
+                int fh = cell_h * h + spacing_row * (h - 1);
+                if (key.has_prefix("widget:")) {
+                    var capped = new FixedCell(child, fw, fh);
+                    capped.set_data<string>("grid-key", key);
+                    child = capped;
+                }
+                child.width_request  = fw;
+                child.height_request = fh;
                 if (fill_horizontally) child.hexpand = true;
                 grid.attach(child, col, row, w, h);
                 done++;
@@ -774,9 +808,7 @@ namespace Singularity {
 
         // Folder / app buttons (unchanged behaviour)
         private AppFolderButton create_folder_button(string folder_id) {
-            var fb = new AppFolderButton(folder_id);
-            fb.add_css_class("app-grid-item");
-            fb.add_css_class("folder-grid-item");
+            var fb = new AppFolderButton(folder_id, icon_size);
 
             fb.clicked.connect((fid) => {
                 var ov = _folder_overlays.lookup(fid);

@@ -156,7 +156,7 @@ namespace Singularity {
             grid_container.margin_bottom = 100;
             scrolled_window.set_child(grid_container);
 
-            launcher_grid = new AppLauncherGrid(app, 96, 6);
+            launcher_grid = new AppLauncherGrid(app, 64, 8, 16);
             launcher_grid.on_app_launched = () => { toggle(); };
             grid_container.append(launcher_grid);
 
