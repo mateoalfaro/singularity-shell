@@ -4,6 +4,7 @@ namespace Singularity {
 
     [DBus (name = "org.freedesktop.DBus")]
     interface DBusProxy : Object {
+        [DBus (name = "GetConnectionUnixProcessID")]
         public abstract uint get_connection_unix_process_id (string name) throws GLib.Error;
     }
 
@@ -21,7 +22,7 @@ namespace Singularity {
             app_path_map = new HashTable<string, string>(str_hash, str_equal);
         }
 
-        public void register_window(uint32 windowId, string objectPath, GLib.BusName sender) {
+        public void register_window(uint32 windowId, GLib.ObjectPath objectPath, GLib.BusName sender) {
             message("Registrar: RegisterWindow(%u, %s) from %s", windowId, objectPath, sender);
 
             window_bus_map.insert(windowId, sender);
@@ -34,8 +35,7 @@ namespace Singularity {
 
                 string cmdline;
                 if (FileUtils.get_contents("/proc/%u/cmdline".printf(pid), out cmdline)) {
-                    string exec_path = cmdline.split("\0")[0];
-                    string app_name = Path.get_basename(exec_path);
+                    string app_name = Path.get_basename(cmdline);
                     message("Registrar: Identified app '%s' for sender %s (PID %u)", app_name, sender, pid);
                     app_bus_map.insert(app_name, sender);
                     app_path_map.insert(app_name, objectPath);

@@ -66,20 +66,20 @@ namespace Singularity {
             if (top <= 0) return null;
             int pos = 1;
             int counter = 0;
-            var menu = parse_level(lines, ref pos, top, group, ref counter, app_id, self_exe);
+            var menu = parse_level(lines, ref pos, top, group, ref counter, app_id, self_exe, true);
             return menu.get_n_items() > 0 ? menu : null;
         }
 
         private static GLib.Menu parse_level(string[] lines, ref int pos, int count,
                                              SimpleActionGroup group, ref int counter,
-                                             string app_id, string self_exe) {
+                                             string app_id, string self_exe, bool is_top = false) {
             var menu = new GLib.Menu();
             var section = new GLib.Menu();
             for (int k = 0; k < count && pos < lines.length; k++) {
                 string line = lines[pos];
                 pos++;
                 if (line == "s") {
-                    if (section.get_n_items() > 0) {
+                    if (!is_top && section.get_n_items() > 0) {
                         menu.append_section(null, section);
                         section = new GLib.Menu();
                     }
@@ -89,8 +89,11 @@ namespace Singularity {
                 if (parts.length >= 3 && parts[0] == "m") {
                     string label = decode_b64(parts[1]);
                     int cc = int.parse(parts[2]);
-                    var sub = parse_level(lines, ref pos, cc, group, ref counter, app_id, self_exe);
-                    if (sub.get_n_items() > 0) section.append_submenu(label, sub);
+                    var sub = parse_level(lines, ref pos, cc, group, ref counter, app_id, self_exe, false);
+                    if (sub.get_n_items() > 0) {
+                        if (is_top) menu.append_submenu(label, sub);
+                        else section.append_submenu(label, sub);
+                    }
                 } else if (parts.length >= 3 && parts[0] == "i") {
                     string label = decode_b64(parts[1]);
                     string idxpath = parts[2];
@@ -111,10 +114,11 @@ namespace Singularity {
                         }
                     });
                     group.add_action(act);
-                    section.append(label, "dbusmenu." + act_id);
+                    if (is_top) menu.append(label, "dbusmenu." + act_id);
+                    else section.append(label, "dbusmenu." + act_id);
                 }
             }
-            if (section.get_n_items() > 0) menu.append_section(null, section);
+            if (!is_top && section.get_n_items() > 0) menu.append_section(null, section);
             return menu;
         }
 
@@ -242,24 +246,26 @@ namespace Singularity {
                 if (role == Atspi.Role.SEPARATOR) {
                     sb.append("s\n");
                     count++;
-                } else if (role == Atspi.Role.MENU) {
-                    string label = "";
-                    try { label = c.get_name() ?? ""; } catch { label = ""; }
-                    if (label.length == 0) continue;
-                    var csb = new StringBuilder();
-                    int cc = serialize_children(c, cp, csb);
-                    if (cc > 0) {
-                        sb.append("m|%s|%d\n".printf(Base64.encode(label.data), cc));
-                        sb.append(csb.str);
-                        count++;
-                    }
-                } else if (role == Atspi.Role.MENU_ITEM || role == Atspi.Role.CHECK_MENU_ITEM ||
+                } else if (role == Atspi.Role.MENU || role == Atspi.Role.POPUP_MENU ||
+                           role == Atspi.Role.MENU_ITEM || role == Atspi.Role.CHECK_MENU_ITEM ||
                            role == Atspi.Role.RADIO_MENU_ITEM || role == Atspi.Role.TEAROFF_MENU_ITEM) {
                     string label = "";
                     try { label = c.get_name() ?? ""; } catch { label = ""; }
-                    if (label.length == 0) continue;
-                    sb.append("i|%s|%s\n".printf(Base64.encode(label.data), join_ints(cp)));
-                    count++;
+                    var csb = new StringBuilder();
+                    int cc = serialize_children(c, cp, csb);
+                    if (cc > 0) {
+                        if (label.length == 0) {
+                            sb.append(csb.str);
+                            count += cc;
+                        } else {
+                            sb.append("m|%s|%d\n".printf(Base64.encode(label.data), cc));
+                            sb.append(csb.str);
+                            count++;
+                        }
+                    } else if (label.length > 0) {
+                        sb.append("i|%s|%s\n".printf(Base64.encode(label.data), join_ints(cp)));
+                        count++;
+                    }
                 }
             }
             return count;

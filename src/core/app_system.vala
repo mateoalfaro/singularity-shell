@@ -877,7 +877,17 @@ namespace Singularity {
             if (app_model != null) {
                 int n = app_model.get_n_items();
                 for (int i = 0; i < n; i++) {
-                    final_menu.append_item(new MenuItem.from_model(app_model, i));
+                    string? lbl = null;
+                    app_model.get_item_attribute(i, Menu.ATTRIBUTE_LABEL, "s", out lbl);
+                    var mi = new MenuItem(lbl, null);
+                    MenuModel? sub = app_model.get_item_link(i, Menu.LINK_SUBMENU);
+                    if (sub != null) {
+                        mi.set_submenu(sub);
+                    } else {
+                        MenuModel? sec = app_model.get_item_link(i, Menu.LINK_SECTION);
+                        if (sec != null) mi.set_section(sec);
+                    }
+                    final_menu.append_item(mi);
                 }
             } else if (current_menu_app_id == "") {
                 // Desktop focused: the global OS menu
