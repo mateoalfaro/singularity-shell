@@ -569,30 +569,35 @@ namespace Singularity {
             });
             group.add_action(quit_action);
 
+            // Capture the window this menu is built for: opening the menu can
+            // move the seat focus, so the live focused handle is unreliable at
+            // click time.
+            void* menu_win = current_focused_window_handle;
+
             var minimize_action = new SimpleAction("minimize", null);
             minimize_action.activate.connect(() => {
-                if (current_focused_window_handle != null) Singularity.minimize_window(current_focused_window_handle);
+                if (menu_win != null) Singularity.minimize_window(menu_win);
             });
             group.add_action(minimize_action);
 
             var maximize_action = new SimpleAction("maximize", null);
             maximize_action.activate.connect(() => {
-                if (current_focused_window_handle != null)
-                    Singularity.wayland_snap_view(current_focused_window_handle, TilingManager.SNAP_MAXIMIZE);
+                if (menu_win != null)
+                    Singularity.wayland_snap_view(menu_win, TilingManager.SNAP_MAXIMIZE);
             });
             group.add_action(maximize_action);
 
             var snap_left_action = new SimpleAction("snap-left", null);
             snap_left_action.activate.connect(() => {
-                if (current_focused_window_handle != null)
-                    Singularity.wayland_snap_view(current_focused_window_handle, TilingManager.SNAP_LEFT);
+                if (menu_win != null)
+                    Singularity.wayland_snap_view(menu_win, TilingManager.SNAP_LEFT);
             });
             group.add_action(snap_left_action);
 
             var snap_right_action = new SimpleAction("snap-right", null);
             snap_right_action.activate.connect(() => {
-                if (current_focused_window_handle != null)
-                    Singularity.wayland_snap_view(current_focused_window_handle, TilingManager.SNAP_RIGHT);
+                if (menu_win != null)
+                    Singularity.wayland_snap_view(menu_win, TilingManager.SNAP_RIGHT);
             });
             group.add_action(snap_right_action);
 
