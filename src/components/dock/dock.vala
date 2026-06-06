@@ -4,7 +4,7 @@ using Gee;
 
 namespace Singularity {
 
-    public class Dock : Gtk.Window {
+    public class Dock : Gtk.Window, Singularity.DebugInspectable {
         private Box dock_box;
         private Box main_container;
         private Box start_area;
@@ -34,9 +34,10 @@ namespace Singularity {
         private bool _overview_active = false;
         private int64 _hover_start_us = 0;
         private const int64 HOVER_GRACE_US = 600000;
-        private Singularity.Animation.TimedAnimation? _slide_anim = null;
+        private uint _slide_timer_id = 0;
         private uint _leave_timeout_id = 0;
-        private uint _edge_poll_id = 0;
+        private Gtk.Window? _reveal_barrier = null;
+        private GtkLayerShell.Edge _reveal_barrier_edge = GtkLayerShell.Edge.BOTTOM;
         private int _last_dimension = 0;
         private int _current_margin = 0;
         private bool _menu_open = false;
@@ -197,7 +198,6 @@ namespace Singularity {
                     GLib.Source.remove(_leave_timeout_id);
                     _leave_timeout_id = 0;
                 }
-                _stop_edge_poll();
                 _hovered = true;
                 _hover_start_us = GLib.get_monotonic_time();
                 update_autohide_state();
@@ -524,10 +524,96 @@ namespace Singularity {
                 }
             }
 
-            if (_hidden) {
-                if (_edge_poll_id == 0) _start_edge_poll(_dock_edge());
-            } else {
-                _stop_edge_poll();
+            _set_reveal_barrier_active(_hidden);
+        }
+
+        public string[] debug_list_vars() {
+            var edge = _dock_edge();
+            int gls_margin = GtkLayerShell.get_margin(this, edge);
+            int excl = GtkLayerShell.get_exclusive_zone(this);
+            string layer = GtkLayerShell.get_layer(this).to_string();
+            string box_size = (dock_box != null)
+                ? "%dx%d".printf(dock_box.get_width(), dock_box.get_height()) : "null";
+            string box_mapped = (dock_box != null) ? dock_box.get_mapped().to_string() : "null";
+            double fps = 0;
+            var clock = get_frame_clock();
+            if (clock != null) fps = clock.get_fps();
+            return {
+                "bool:hidden=%s".printf(_hidden.to_string()),
+                "bool:hovered=%s".printf(_hovered.to_string()),
+                "bool:overview_active=%s".printf(_overview_active.to_string()),
+                "bool:menu_open=%s".printf(_menu_open.to_string()),
+                "bool:hidden_for_fullscreen=%s".printf(_hidden_for_fullscreen.to_string()),
+                "bool:autohide=%s".printf(autohide.to_string()),
+                "bool:intellihide=%s".printf(intellihide.to_string()),
+                "int:current_margin=%d".printf(_current_margin),
+                "int:last_dimension=%d".printf(_last_dimension),
+                "str:visibility_mode=%s".printf(visibility_mode),
+                "str:win_mapped=%s".printf(get_mapped().to_string()),
+                "str:win_visible=%s".printf(get_visible().to_string()),
+                "str:win_size=%dx%d".printf(get_width(), get_height()),
+                "str:gls_margin=%d".printf(gls_margin),
+                "str:excl_zone=%d".printf(excl),
+                "str:layer=%s".printf(layer),
+                "str:box_mapped=%s".printf(box_mapped),
+                "str:box_size=%s".printf(box_size),
+                "str:fps=%.1f".printf(fps)
+            };
+        }
+
+        public void debug_set_var(string name, string value) {
+            bool b = (value == "true" || value == "1");
+            int iv = int.parse(value);
+            switch (name) {
+                case "hidden":                _hidden = b; update_autohide_state(); break;
+                case "hovered":               _hovered = b; update_autohide_state(); break;
+                case "overview_active":       _overview_active = b; update_autohide_state(); break;
+                case "menu_open":             _menu_open = b; update_autohide_state(); break;
+                case "hidden_for_fullscreen": _hidden_for_fullscreen = b; break;
+                case "autohide":              autohide = b; update_autohide_state(); break;
+                case "intellihide":           intellihide = b; update_autohide_state(); break;
+                case "current_margin":
+                    _current_margin = iv;
+                    set_margin(this, _dock_edge(), iv);
+                    queue_draw();
+                    break;
+                case "visibility_mode":       visibility_mode = value; update_visibility_mode(); break;
+            }
+        }
+
+        public string[] debug_actions() {
+            return { "force_show", "update_autohide_state", "present_redraw", "remap", "queue_resize" };
+        }
+
+        public void debug_run_action(string name) {
+            switch (name) {
+                case "force_show":
+                    _hidden = false;
+                    _hovered = false;
+                    int gap = _settings.get_int("dock-gap");
+                    _current_margin = gap;
+                    present();
+                    set_margin(this, _dock_edge(), gap);
+                    set_exclusive_zone(this, int.max(0, _last_dimension - SHADOW_BOTTOM_PX));
+                    queue_resize();
+                    queue_draw();
+                    break;
+                case "update_autohide_state":
+                    update_autohide_state();
+                    break;
+                case "present_redraw":
+                    present();
+                    queue_draw();
+                    break;
+                case "remap":
+                    hide();
+                    present();
+                    queue_draw();
+                    break;
+                case "queue_resize":
+                    queue_resize();
+                    queue_draw();
+                    break;
             }
         }
 
@@ -540,116 +626,112 @@ namespace Singularity {
 
         private bool is_any_window_maximized_on_my_monitor() {
             var display = Gdk.Display.get_default();
-            // Resolve this dock's monitor; fall back to the primary (first)
-            // monitor so the primary dock isn't left with a null monitor
-            // (which previously made it hide on ANY maximized window).
             var monitor = this.get_target_monitor() ?? find_shell_monitor();
             if (monitor == null && display != null && display.get_monitors().get_n_items() > 0)
                 monitor = display.get_monitors().get_item(0) as Gdk.Monitor;
+            if (monitor == null) return app_system.has_any_maximized_window();
+            return app_system.has_maximized_window_on_monitor(monitor);
+        }
 
-            // Single monitor: any maximized window is on it.
-            if (monitor == null || (display != null && display.get_monitors().get_n_items() <= 1)) {
-                foreach (var win in app_system.get_active_workspace_windows())
-                    if (win.is_maximized) return true;
-                return false;
-            }
-
-            string? target_conn = monitor.get_connector();
-            Gdk.Monitor? primary = (display != null)
-                ? display.get_monitors().get_item(0) as Gdk.Monitor : null;
-            bool target_is_primary = (primary != null) && (
-                primary == monitor ||
-                (target_conn != null && primary.get_connector() == target_conn));
-
-            foreach (var win in app_system.get_active_workspace_windows()) {
-                if (!win.is_maximized) continue;
-                var wmon = Singularity.wayland_get_window_monitor(win.handle);
-                if (wmon == null) {
-                    // Unresolvable -> assume primary; only the primary dock hides.
-                    if (target_is_primary) return true;
-                    continue;
-                }
-                if (wmon == monitor) return true;
-                if (target_conn != null && wmon.get_connector() == target_conn) return true;
-            }
-            return false;
+        private void pulse_frame_clock() {
+            var fc = get_frame_clock();
+            if (fc == null) return;
+            fc.begin_updating();
+            GLib.Timeout.add(350, () => {
+                var f = get_frame_clock();
+                if (f != null) f.end_updating();
+                return GLib.Source.REMOVE;
+            });
         }
 
         private void animate_dock(bool hide) {
-            if (_slide_anim != null) {
-                _slide_anim.skip();
-                _slide_anim = null;
+            if (_slide_timer_id != 0) {
+                GLib.Source.remove(_slide_timer_id);
+                _slide_timer_id = 0;
             }
 
             int gap = _settings.get_int("dock-gap");
-            string pos = _settings.get_string("dock-position");
-            GtkLayerShell.Edge edge = GtkLayerShell.Edge.BOTTOM;
-            if (pos == "left") edge = GtkLayerShell.Edge.LEFT;
-            else if (pos == "right") edge = GtkLayerShell.Edge.RIGHT;
+            GtkLayerShell.Edge edge = _dock_edge();
+            int off = -(_last_dimension - 4);
 
-            // Leave 4px visible so the edge hot-strip can receive pointer events
-            int target_margin = gap;
             if (hide) {
-                target_margin = -(_last_dimension - 4);
                 set_exclusive_zone(this, 0);
+                start_slide(edge, _current_margin, off);
             } else {
-                _stop_edge_poll();
+                bool reserve = !autohide && !(intellihide && is_any_window_maximized_on_my_monitor());
+                set_exclusive_zone(this, reserve ? int.max(0, _last_dimension - SHADOW_BOTTOM_PX) : 0);
+                // Returning on-screen needs a fresh buffer; the idle frame clock
+                // won't render one, so an unmap->map cycle at the visible margin
+                // forces it (otherwise the surface comes back blank).
+                _current_margin = gap;
+                set_margin(this, edge, gap);
+                ((Gtk.Widget) this).hide();
+                present();
             }
-
-            _slide_anim = new Singularity.Animation.TimedAnimation(
-                this, (double)_current_margin, (double)target_margin, 200,
-                hide ? Singularity.Animation.TimedAnimation.Easing.EASE_IN_CUBIC : Singularity.Animation.TimedAnimation.Easing.EASE_OUT_CUBIC
-            );
-            _slide_anim.tick.connect(() => {
-                _current_margin = (int)_slide_anim.value;
-                set_margin(this, edge, _current_margin);
-            });
-            _slide_anim.done.connect(() => {
-                _slide_anim = null;
-                if (hide) {
-                    _start_edge_poll(edge);
-                } else {
-                    update_autohide_state(); // restore exclusive zone
-                }
-            });
-            _slide_anim.play();
+            pulse_frame_clock();
         }
 
-        private void _start_edge_poll(GtkLayerShell.Edge edge) {
-            _stop_edge_poll();
-            if (!_hidden) return;
-            _edge_poll_id = GLib.Timeout.add(80, () => {
-                if (!_hidden) {
-                    _edge_poll_id = 0;
+        private void start_slide(GtkLayerShell.Edge edge, int start, int target) {
+            _current_margin = start;
+            set_margin(this, edge, start);
+            int span = target - start;
+            if (span == 0) return;
+            int64 t0 = GLib.get_monotonic_time();
+            int64 duration_us = 200000;
+            _slide_timer_id = GLib.Timeout.add(16, () => {
+                double t = (double)(GLib.get_monotonic_time() - t0) / (double)duration_us;
+                if (t >= 1.0) {
+                    _current_margin = target;
+                    set_margin(this, edge, target);
+                    _slide_timer_id = 0;
                     return GLib.Source.REMOVE;
                 }
-                var display = Gdk.Display.get_default();
-                if (display == null) return GLib.Source.CONTINUE;
-                var seat = display.get_default_seat();
-                if (seat == null) return GLib.Source.CONTINUE;
-                var pointer = seat.get_pointer();
-                if (pointer == null) return GLib.Source.CONTINUE;
+                double e = t * t * t;
+                _current_margin = (int)(start + span * e);
+                set_margin(this, edge, _current_margin);
+                return GLib.Source.CONTINUE;
+            });
+        }
 
-                // Get cursor position relative to this surface
-                var surface = get_surface();
-                if (surface == null) return GLib.Source.CONTINUE;
-                double cx, cy;
-                Gdk.ModifierType mod_type;
-                bool in_surface = surface.get_device_position(pointer, out cx, out cy, out mod_type);
-                if (!in_surface) return GLib.Source.CONTINUE;
-
-                // Check if pointer is within the 4px hot-strip
-                int w = get_width();
-                int h = get_height();
-                bool in_strip = false;
-                if (edge == GtkLayerShell.Edge.BOTTOM)
-                    in_strip = (cx >= 0 && cx <= w && cy >= 0 && cy <= 4);
-                else if (edge == GtkLayerShell.Edge.LEFT)
-                    in_strip = (cy >= 0 && cy <= h && cx >= (w - 4) && cx <= w);
-                else if (edge == GtkLayerShell.Edge.RIGHT)
-                    in_strip = (cy >= 0 && cy <= h && cx >= 0 && cx <= 4);
-
-                if (in_strip && !_hovered) {
+        // A dedicated thin layer-shell surface pinned to the dock's edge. A
+        // slid-off dock receives no pointer events on this compositor, so this
+        // always-on-screen strip is what catches the cursor to reveal the dock.
+        private void _set_reveal_barrier_active(bool active) {
+            if (!active) {
+                if (_reveal_barrier != null) _reveal_barrier.set_visible(false);
+                return;
+            }
+            var edge = _dock_edge();
+            if (_reveal_barrier != null && _reveal_barrier_edge != edge) {
+                _reveal_barrier.destroy();
+                _reveal_barrier = null;
+            }
+            if (_reveal_barrier == null) {
+                _reveal_barrier_edge = edge;
+                var bar = new Gtk.Window();
+                bar.application = this.application;
+                bar.add_css_class("dock-reveal-barrier");
+                GtkLayerShell.init_for_window(bar);
+                var mon = get_target_monitor() ?? find_shell_monitor();
+                if (mon != null) GtkLayerShell.set_monitor(bar, mon);
+                GtkLayerShell.set_layer(bar, GtkLayerShell.Layer.TOP);
+                GtkLayerShell.set_namespace(bar, "singularity-dock-reveal");
+                GtkLayerShell.set_exclusive_zone(bar, 0);
+                var content = new Box(Orientation.HORIZONTAL, 0);
+                if (edge == GtkLayerShell.Edge.BOTTOM) {
+                    GtkLayerShell.set_anchor(bar, GtkLayerShell.Edge.BOTTOM, true);
+                    GtkLayerShell.set_anchor(bar, GtkLayerShell.Edge.LEFT, true);
+                    GtkLayerShell.set_anchor(bar, GtkLayerShell.Edge.RIGHT, true);
+                    content.set_size_request(-1, 2);
+                } else {
+                    GtkLayerShell.set_anchor(bar, edge, true);
+                    GtkLayerShell.set_anchor(bar, GtkLayerShell.Edge.TOP, true);
+                    GtkLayerShell.set_anchor(bar, GtkLayerShell.Edge.BOTTOM, true);
+                    content.set_size_request(2, -1);
+                }
+                bar.set_child(content);
+                var motion = new Gtk.EventControllerMotion();
+                motion.enter.connect(() => {
                     if (_leave_timeout_id != 0) {
                         GLib.Source.remove(_leave_timeout_id);
                         _leave_timeout_id = 0;
@@ -657,16 +739,11 @@ namespace Singularity {
                     _hovered = true;
                     _hover_start_us = GLib.get_monotonic_time();
                     update_autohide_state();
-                }
-                return GLib.Source.CONTINUE;
-            });
-        }
-
-        private void _stop_edge_poll() {
-            if (_edge_poll_id != 0) {
-                GLib.Source.remove(_edge_poll_id);
-                _edge_poll_id = 0;
+                });
+                ((Gtk.Widget) bar).add_controller(motion);
+                _reveal_barrier = bar;
             }
+            _reveal_barrier.present();
         }
 
         private void update_visibility_mode() {
@@ -2067,13 +2144,17 @@ namespace Singularity {
                 GLib.Source.remove(_refresh_timeout_id);
                 _refresh_timeout_id = 0;
             }
+            if (_slide_timer_id != 0) {
+                GLib.Source.remove(_slide_timer_id);
+                _slide_timer_id = 0;
+            }
             if (_leave_timeout_id != 0) {
                 GLib.Source.remove(_leave_timeout_id);
                 _leave_timeout_id = 0;
             }
-            if (_edge_poll_id != 0) {
-                GLib.Source.remove(_edge_poll_id);
-                _edge_poll_id = 0;
+            if (_reveal_barrier != null) {
+                _reveal_barrier.destroy();
+                _reveal_barrier = null;
             }
             base.dispose();
         }
@@ -2167,15 +2248,9 @@ namespace Singularity {
             }
 
             if (_hidden) {
+                // Margin is owned by animate_dock's slide; only manage the zone.
                 GtkLayerShell.set_exclusive_zone(this, 0);
                 app_system.shell_dock_height = 0;
-                if (dimension > 10 && _slide_anim == null) {
-                    int edge_margin = -(dimension - 4);
-                    if (_current_margin != edge_margin) {
-                        _current_margin = edge_margin;
-                        set_margin(this, _dock_edge(), edge_margin);
-                    }
-                }
             } else {
                 if (!autohide && !(intellihide && is_any_window_maximized_on_my_monitor())) {
                     int zone = int.max(0, dimension - SHADOW_BOTTOM_PX);

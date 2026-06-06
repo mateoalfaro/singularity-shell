@@ -1,6 +1,20 @@
 namespace Singularity {
 
     /**
+     * Implemented by shell components that expose their internal Vala state
+     * to the DevTools overlay for live inspection and override.
+     */
+    public interface DebugInspectable : Object {
+        /** Returns one entry per var as "kind:name=value" (kind: bool|int|str). */
+        public abstract string[] debug_list_vars ();
+        /** Sets a var by name from a string value. */
+        public abstract void debug_set_var (string name, string value);
+        /** Triggers a named one-shot action (e.g. "force_show"). */
+        public abstract string[] debug_actions ();
+        public abstract void debug_run_action (string name);
+    }
+
+    /**
      * Central debug/instrumentation hub for Singularity Desktop.
      *
      * Toggle debug_mode at runtime (from DeveloperPage or CLI) to enable
@@ -16,12 +30,26 @@ namespace Singularity {
         /** Whether the floating HUD overlay is visible. */
         public bool hud_visible { get; set; default = false; }
 
+        /** Whether the modular DevTools overlay is visible. */
+        public bool devtools_visible { get; set; default = false; }
+
+        /** Realtime event stream consumed by the DevTools events panel. */
+        public signal void event_logged (string component, string level, string message);
+
+        /** Feed a realtime event to the DevTools events panel (always emitted). */
+        public void emit_event (string component, string level, string message) {
+            event_logged (component, level, message);
+        }
+
         /**
          * Weak references to non-singleton managers set by main.vala
          * after those managers are created.
          */
         public weak HotCornerManager? hot_corner_manager { get; set; }
         public weak TilingManager? tiling_manager { get; set; }
+
+        /** The primary dock, exposed for live var inspection in DevTools. */
+        public weak DebugInspectable? dock_inspect { get; set; }
 
         /** Whether the sidebar should stay open when focus is lost. */
         public bool sidebar_pinned { get; set; default = false; }
