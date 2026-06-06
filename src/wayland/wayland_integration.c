@@ -1166,6 +1166,7 @@ void singularity_wayland_minimize_window(void* handle) {
     }
     struct zwlr_foreign_toplevel_handle_v1 *toplevel = (struct zwlr_foreign_toplevel_handle_v1 *)handle;
     zwlr_foreign_toplevel_handle_v1_minimize(toplevel);
+    wl_display_flush(ctx.display);
 }
 void singularity_wayland_unminimize_window(void* handle) {
     if (!ctx.valid_handles || !g_hash_table_contains(ctx.valid_handles, handle)) {
@@ -1174,6 +1175,7 @@ void singularity_wayland_unminimize_window(void* handle) {
     }
     struct zwlr_foreign_toplevel_handle_v1 *toplevel = (struct zwlr_foreign_toplevel_handle_v1 *)handle;
     zwlr_foreign_toplevel_handle_v1_unset_minimize(toplevel);
+    wl_display_flush(ctx.display);
 }
 void singularity_wayland_close_window(void* handle) {
     if (!ctx.valid_handles || !g_hash_table_contains(ctx.valid_handles, handle)) {
@@ -1182,6 +1184,7 @@ void singularity_wayland_close_window(void* handle) {
     }
     struct zwlr_foreign_toplevel_handle_v1 *toplevel = (struct zwlr_foreign_toplevel_handle_v1 *)handle;
     zwlr_foreign_toplevel_handle_v1_close(toplevel);
+    wl_display_flush(ctx.display);
 }
 static struct zwlr_output_configuration_v1 *current_config = NULL;
 static void config_handle_succeeded(void *data, struct zwlr_output_configuration_v1 *config) {
@@ -1362,6 +1365,7 @@ void singularity_wayland_snap_view(void* toplevel_handle, uint32_t direction) {
     }
     struct zwlr_foreign_toplevel_handle_v1 *toplevel = (struct zwlr_foreign_toplevel_handle_v1 *)toplevel_handle;
     zsingularity_tiling_manager_v1_snap_view(ctx.tiling_manager, toplevel, direction);
+    wl_display_flush(ctx.display);
 }
 
 void singularity_wayland_set_window_output_changed_callback(WindowOutputChangedCallback cb, void *user_data) {
