@@ -629,8 +629,25 @@ namespace Singularity {
             var monitor = this.get_target_monitor() ?? find_shell_monitor();
             if (monitor == null && display != null && display.get_monitors().get_n_items() > 0)
                 monitor = display.get_monitors().get_item(0) as Gdk.Monitor;
-            if (monitor == null) return app_system.has_any_maximized_window();
-            return app_system.has_maximized_window_on_monitor(monitor);
+            bool single = (display == null) || (display.get_monitors().get_n_items() <= 1);
+            string? target_conn = (monitor != null) ? monitor.get_connector() : null;
+            Gdk.Monitor? primary = (display != null)
+                ? display.get_monitors().get_item(0) as Gdk.Monitor : null;
+            bool target_is_primary = (primary != null && monitor != null)
+                && (primary == monitor || (target_conn != null && primary.get_connector() == target_conn));
+
+            // Only windows on the active workspace AND on this dock's monitor
+            // count: a maximized window on another workspace or another monitor
+            // must not hide this dock.
+            foreach (var win in app_system.get_active_workspace_windows()) {
+                if (!win.is_maximized) continue;
+                if (single || monitor == null) return true;
+                var wmon = Singularity.wayland_get_window_monitor(win.handle);
+                if (wmon == null) { if (target_is_primary) return true; continue; }
+                if (wmon == monitor) return true;
+                if (target_conn != null && wmon.get_connector() == target_conn) return true;
+            }
+            return false;
         }
 
         private void pulse_frame_clock() {
