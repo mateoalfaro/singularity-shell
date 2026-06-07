@@ -129,6 +129,9 @@ public class SingularityApp : Singularity.ShellApplication, Singularity.Shell.Sh
                 icon_theme.add_search_path(build_icons_path);
             }
         }
+
+        apply_icon_theme();
+        settings.changed["icon-theme"].connect(apply_icon_theme);
         Singularity.AppSystem.get_default();
         var cal_manager = Singularity.Calendar.CalendarManager.get_default();
         cal_manager.register_provider(new Singularity.Calendar.LocalProvider());
@@ -1144,6 +1147,38 @@ window.inactive.shadow.color: %s
             app_switcher.show_and_cycle_prev();
             return false;
         });
+    }
+
+    private void apply_icon_theme() {
+        string theme = settings.get_string("icon-theme");
+        if (theme == "") return;
+
+        var gtk_settings = Gtk.Settings.get_default();
+        if (gtk_settings != null) gtk_settings.gtk_icon_theme_name = theme;
+
+        var src = GLib.SettingsSchemaSource.get_default();
+        if (src != null && src.lookup("org.gnome.desktop.interface", true) != null) {
+            var iface = new GLib.Settings("org.gnome.desktop.interface");
+            if (iface.get_string("icon-theme") != theme)
+                iface.set_string("icon-theme", theme);
+        }
+
+        try {
+            string path = GLib.Path.build_filename(GLib.Environment.get_home_dir(), ".xsettingsd");
+            string body = "";
+            string existing = "";
+            if (GLib.FileUtils.test(path, FileTest.EXISTS) && GLib.FileUtils.get_contents(path, out existing)) {
+                foreach (string line in existing.split("\n")) {
+                    if (line.strip() == "" || line.has_prefix("Net/IconThemeName")) continue;
+                    body += line + "\n";
+                }
+            }
+            body += "Net/IconThemeName \"%s\"\n".printf(theme);
+            GLib.FileUtils.set_contents(path, body);
+            Process.spawn_command_line_async("pkill -HUP xsettingsd");
+        } catch (GLib.Error e) {
+            warning("icon theme: failed to update xsettingsd: %s", e.message);
+        }
     }
 
     private void apply_window_management_settings() {

@@ -332,6 +332,7 @@ namespace Singularity {
                 // via the settings.changed["dark-mode"] signal in main.vala.
             });
             app_group.add_row(dark_row);
+
             var accent_row = new PreferencesRow();
             var accent_box = new Box(Orientation.VERTICAL, 12);
             accent_box.margin_top = 12;
@@ -670,6 +671,16 @@ namespace Singularity {
                 }
             });
             tuning_row.add_row(gtk4_row);
+
+            // Icon theme selector (applies to the shell and all apps)
+            string[] icon_themes = list_icon_themes();
+            string current_icon = settings.get_string("icon-theme");
+            if (current_icon == "") current_icon = "Singularity";
+            var icon_row = new SelectionRow(_("Icon Theme"), icon_themes, current_icon);
+            icon_row.selected.connect((val) => {
+                settings.set_string("icon-theme", val);
+            });
+            tuning_row.add_row(icon_row);
 
             // Qt theme selector (Kvantum if installed, otherwise informational)
             bool kvantum_available = GLib.Environment.find_program_in_path("kvantummanager") != null;
@@ -1155,6 +1166,36 @@ namespace Singularity {
         private static string join_tokens(ArrayList<string> list) {
             if (list.size == 0) return "";
             return string.joinv(",", list.to_array());
+        }
+
+        private string[] list_icon_themes() {
+            var seen = new GenericArray<string>();
+            var names = new GLib.GenericSet<string>(str_hash, str_equal);
+            string[] dirs = {
+                GLib.Path.build_filename(Environment.get_home_dir(), ".icons"),
+                GLib.Path.build_filename(Environment.get_user_data_dir(), "icons")
+            };
+            foreach (unowned string d in Environment.get_system_data_dirs())
+                dirs += GLib.Path.build_filename(d, "icons");
+            foreach (string dir in dirs) {
+                try {
+                    var dd = Dir.open(dir);
+                    string? n;
+                    while ((n = dd.read_name()) != null) {
+                        if (names.contains(n)) continue;
+                        string index = GLib.Path.build_filename(dir, n, "index.theme");
+                        if (!FileUtils.test(index, FileTest.EXISTS)) continue;
+                        string content;
+                        try { FileUtils.get_contents(index, out content); } catch (Error e) { continue; }
+                        if (!content.contains("Directories=")) continue;
+                        names.add(n);
+                        seen.add(n);
+                    }
+                } catch (FileError e) { continue; }
+            }
+            string[] result = {};
+            for (int i = 0; i < seen.length; i++) result += seen[i];
+            return result;
         }
 
         private void clear_box(Box box) {
