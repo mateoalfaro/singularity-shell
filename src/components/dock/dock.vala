@@ -35,6 +35,7 @@ namespace Singularity {
         private int64 _hover_start_us = 0;
         private const int64 HOVER_GRACE_US = 600000;
         private uint _slide_timer_id = 0;
+        private uint _fade_timer_id = 0;
         private uint _leave_timeout_id = 0;
         private Gtk.Window? _reveal_barrier = null;
         private GtkLayerShell.Edge _reveal_barrier_edge = GtkLayerShell.Edge.BOTTOM;
@@ -640,7 +641,7 @@ namespace Singularity {
             // count: a maximized window on another workspace or another monitor
             // must not hide this dock.
             foreach (var win in app_system.get_active_workspace_windows()) {
-                if (!win.is_maximized) continue;
+                if (!win.is_maximized || win.is_minimized) continue;
                 if (single || monitor == null) return true;
                 var wmon = Singularity.wayland_get_window_monitor(win.handle);
                 if (wmon == null) { if (target_is_primary) return true; continue; }
@@ -666,12 +667,17 @@ namespace Singularity {
                 GLib.Source.remove(_slide_timer_id);
                 _slide_timer_id = 0;
             }
+            if (_fade_timer_id != 0) {
+                GLib.Source.remove(_fade_timer_id);
+                _fade_timer_id = 0;
+            }
 
             int gap = _settings.get_int("dock-gap");
             GtkLayerShell.Edge edge = _dock_edge();
             int off = -(_last_dimension - 4);
 
             if (hide) {
+                dock_box.remove_css_class("dock-reveal-offset");
                 set_exclusive_zone(this, 0);
                 start_slide(edge, _current_margin, off);
             } else {
@@ -682,10 +688,27 @@ namespace Singularity {
                 // forces it (otherwise the surface comes back blank).
                 _current_margin = gap;
                 set_margin(this, edge, gap);
+                // Slide the content up from below: offset it down (no transition,
+                // clipped out of the surface), remap, then drop the offset so the
+                // CSS transform transition animates it into view. The frame clock
+                // is live right after the remap (and we pulse it), so the content
+                // transform is presented reliably without moving the surface.
+                dock_box.add_css_class("dock-reveal-offset");
                 ((Gtk.Widget) this).hide();
                 present();
+                start_content_slide();
             }
             pulse_frame_clock();
+        }
+
+        private void start_content_slide() {
+            // Drop the offset a couple of frames after the remap so the transform
+            // transition has an applied start state to animate from.
+            _fade_timer_id = GLib.Timeout.add(32, () => {
+                dock_box.remove_css_class("dock-reveal-offset");
+                _fade_timer_id = 0;
+                return GLib.Source.REMOVE;
+            });
         }
 
         private void start_slide(GtkLayerShell.Edge edge, int start, int target) {
@@ -2168,6 +2191,10 @@ namespace Singularity {
             if (_slide_timer_id != 0) {
                 GLib.Source.remove(_slide_timer_id);
                 _slide_timer_id = 0;
+            }
+            if (_fade_timer_id != 0) {
+                GLib.Source.remove(_fade_timer_id);
+                _fade_timer_id = 0;
             }
             if (_leave_timeout_id != 0) {
                 GLib.Source.remove(_leave_timeout_id);
