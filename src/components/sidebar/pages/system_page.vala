@@ -6,6 +6,7 @@ namespace Singularity.SidebarPages {
     public class SystemPage : SettingsPage {
         private SettingsView view;
         private EntryRow hostname_row;
+        private SystemComponents.Component[] _components;
 
         public SystemPage(SettingsView view) {
             base(_("About"));
@@ -17,6 +18,17 @@ namespace Singularity.SidebarPages {
         }
 
         private void build_ui() {
+            // Copy-all-as-markdown action, far right in the page header.
+            var spacer = new Box(Orientation.HORIZONTAL, 0);
+            spacer.hexpand = true;
+            header.append(spacer);
+            var copy_btn = new Button.from_icon_name("edit-copy-symbolic");
+            copy_btn.has_frame = false;
+            copy_btn.tooltip_text = _("Copy system info as Markdown");
+            copy_btn.add_css_class("navigation-button");
+            copy_btn.clicked.connect(copy_info_markdown);
+            header.append(copy_btn);
+
             var logo_box = new Box(Orientation.VERTICAL, 12);
             logo_box.margin_top = 24;
             logo_box.margin_bottom = 24;
@@ -52,6 +64,52 @@ namespace Singularity.SidebarPages {
             sw_group.add_row(create_info_row("Windowing System", "Wayland"));
             sw_group.add_row(create_info_row("Kernel Version", get_kernel_version()));
             add_group(sw_group);
+
+            _components = SystemComponents.collect();
+            var comp_group = new PreferencesGroup(_("System Components"),
+                _("Versions, licenses and build details of the components the session relies on"));
+            foreach (var c in _components) {
+                if (c.caps.length == 0) {
+                    var row = new ActionRow(c.name, c.license);
+                    var vlabel = new Label(c.version);
+                    vlabel.add_css_class("dim-label");
+                    vlabel.valign = Align.CENTER;
+                    row.add_suffix(vlabel);
+                    comp_group.add_row(row);
+                    continue;
+                }
+                var row = new ExpanderRow(c.name, c.license);
+                if (c.warn) {
+                    row.icon_name = "dialog-warning-symbolic";
+                    row.add_css_class("component-warning");
+                }
+                var vlabel = new Label(c.version);
+                vlabel.add_css_class("dim-label");
+                vlabel.valign = Align.CENTER;
+                row.add_suffix(vlabel);
+                foreach (var cap in c.caps) {
+                    var cap_row = new ActionRow(cap.label);
+                    if (cap.ok) {
+                        var ok_icon = new Image.from_icon_name("object-select-symbolic");
+                        ok_icon.add_css_class("success");
+                        ok_icon.valign = Align.CENTER;
+                        cap_row.add_suffix(ok_icon);
+                    } else {
+                        var fail_label = new Label(cap.required ? _("Not available") : _("Optional, not available"));
+                        fail_label.add_css_class("dim-label");
+                        fail_label.valign = Align.CENTER;
+                        cap_row.add_suffix(fail_label);
+                        var fail_icon = new Image.from_icon_name("dialog-warning-symbolic");
+                        if (cap.required) fail_icon.add_css_class("error");
+                        else fail_icon.add_css_class("dim-label");
+                        fail_icon.valign = Align.CENTER;
+                        cap_row.add_suffix(fail_icon);
+                    }
+                    row.add_row(cap_row);
+                }
+                comp_group.add_row(row);
+            }
+            add_group(comp_group);
             var preview_group = new PreferencesGroup(_("Experimental"));
             var settings = new GLib.Settings("dev.sinty.desktop");
             bool preview_enabled = settings.get_boolean("preview-features-enabled");
@@ -62,6 +120,19 @@ namespace Singularity.SidebarPages {
             settings.bind("developer-mode", dev_row.switch_btn, "active", SettingsBindFlags.DEFAULT);
             preview_group.add_row(dev_row);
             add_group(preview_group);
+        }
+
+        private void copy_info_markdown() {
+            var sb = new StringBuilder();
+            sb.append("## Singularity report\n\n");
+            sb.append_printf("- Singularity Desktop: %s\n", SingularityApp.VERSION);
+            sb.append_printf("- OS: %s\n", get_os_name());
+            sb.append_printf("- Kernel: %s\n", get_kernel_version());
+            sb.append_printf("- Graphics: %s\n", get_graphics_info());
+            sb.append_printf("- Processor: %s\n", get_processor_info());
+            sb.append_printf("- Memory: %s\n\n", get_memory_info());
+            sb.append(SystemComponents.to_markdown(_components));
+            get_clipboard().set_text(sb.str);
         }
 
         private Widget create_info_row(string title, string value) {

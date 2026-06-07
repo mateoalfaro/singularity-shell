@@ -110,6 +110,9 @@ namespace Singularity {
     [CCode (cname = "singularity_wayland_set_window_output_changed_callback")]
     public void wayland_set_window_output_changed_callback(WindowOutputChangedCallback cb, void* data);
 
+    [CCode (cname = "singularity_wayland_list_globals")]
+    public string wayland_list_globals();
+
     [CCode (cname = "singularity_request_surface_blur", cheader_filename = "blur_surface.h")]
     public void request_surface_blur(Gtk.Widget widget, uint32 radius);
 

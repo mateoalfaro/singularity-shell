@@ -1415,3 +1415,33 @@ void* singularity_wayland_get_window_monitor(void *handle) {
     }
     return NULL;
 }
+
+static void probe_handle_global(void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version) {
+    (void)registry; (void)name; (void)version;
+    GString *s = (GString *)data;
+    g_string_append(s, interface);
+    g_string_append_c(s, '\n');
+}
+static void probe_handle_global_remove(void *data, struct wl_registry *registry, uint32_t name) {
+    (void)data; (void)registry; (void)name;
+}
+static const struct wl_registry_listener probe_registry_listener = {
+    .global = probe_handle_global,
+    .global_remove = probe_handle_global_remove,
+};
+
+/* Returns a newline-separated list of the Wayland global interfaces the running
+ * compositor advertises. Opens its own short-lived connection so it is safe to
+ * call independently of the main integration. Caller frees with g_free(). */
+char* singularity_wayland_list_globals(void) {
+    struct wl_display *display = wl_display_connect(NULL);
+    if (!display) return g_strdup("");
+    struct wl_registry *registry = wl_display_get_registry(display);
+    if (!registry) { wl_display_disconnect(display); return g_strdup(""); }
+    GString *s = g_string_new(NULL);
+    wl_registry_add_listener(registry, &probe_registry_listener, s);
+    wl_display_roundtrip(display);
+    wl_registry_destroy(registry);
+    wl_display_disconnect(display);
+    return g_string_free(s, FALSE);
+}

@@ -70,4 +70,8 @@ void singularity_wayland_reset_night_light();
  * Returns NULL if unknown. Transfer full - caller must g_object_unref when done. */
 void* singularity_wayland_get_window_monitor(void *handle);
 
+/* Newline-separated list of Wayland global interfaces the running compositor
+ * advertises. Caller frees with g_free(). */
+char* singularity_wayland_list_globals(void);
+
 #endif
