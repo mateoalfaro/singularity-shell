@@ -1087,6 +1087,16 @@ namespace Singularity {
                 windows.remove(found);
                 if (mru_windows.find(found) != null) mru_windows.remove(found);
                 app_closed(handle);
+                // Closing the focused window (e.g. a fullscreen app or a
+                // transient fullscreen grab like flameshot) does not generate a
+                // focus event on its own, so the panel and dock would stay
+                // hidden-for-fullscreen forever. Drop the stale focus handle and
+                // re-evaluate so the bars reappear immediately.
+                if (handle == current_focused_window_handle) {
+                    current_focused_window_handle = null;
+                    window_focused(null);
+                    any_fullscreen_changed();
+                }
                 foreach (var ws in workspaces) {
                     if (ws.windows.find(found) != null) {
                         ws.windows.remove(found);

@@ -813,7 +813,13 @@ namespace Singularity {
                 set_layer(this, GtkLayerShell.Layer.BACKGROUND);
             } else {
                 set_layer(this, GtkLayerShell.Layer.OVERLAY);
+                // A layer change on an idle, occluded surface (e.g. a maximized
+                // window covering it) is not composited until a frame is
+                // committed, so closing a focused fullscreen window left the
+                // dock buried. Remap to force a fresh buffer and present.
+                ((Gtk.Widget) this).hide();
                 update_visibility_mode();
+                pulse_frame_clock();
             }
         }
 

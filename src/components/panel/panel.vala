@@ -360,8 +360,25 @@ namespace Singularity {
                 set_exclusive_zone(this, 0);
                 set_layer(this, GtkLayerShell.Layer.BACKGROUND);
             } else {
+                // A layer change on an idle, occluded surface (e.g. a maximized
+                // window covering the top strip) is not composited until a frame
+                // is committed, so closing a focused fullscreen window left the
+                // topbar buried. Remap to force a fresh buffer and present.
+                ((Gtk.Widget) this).hide();
                 update_visibility();
+                pulse_frame_clock();
             }
+        }
+
+        private void pulse_frame_clock() {
+            var fc = get_frame_clock();
+            if (fc == null) return;
+            fc.begin_updating();
+            GLib.Timeout.add(350, () => {
+                var f = get_frame_clock();
+                if (f != null) f.end_updating();
+                return GLib.Source.REMOVE;
+            });
         }
 
         private void update_flat_mode() {
