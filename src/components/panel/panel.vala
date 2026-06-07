@@ -22,7 +22,9 @@ namespace Singularity {
         private bool _hidden_for_fullscreen = false;
         private ulong _sig_app_focused = 0;
         private ulong _sig_menu_model_changed = 0;
-        private string _last_wallpaper_uri = "";
+        private bool _last_strip_light = false;
+        private double _last_strip_lum = -1.0;
+        private double _last_frac = -1.0;
         private Button workspace_btn;
         private bool _workspace_overview_active = false;
         private bool _dock_hidden = false;
@@ -326,7 +328,11 @@ namespace Singularity {
                 update_flat_mode();
             });
             _settings.changed["background-picture-uri"].connect(() => {
-                _last_wallpaper_uri = "";
+                _last_strip_lum = -1.0;
+                update_topbar_fg_class();
+            });
+            WallpaperManager.get_default().wallpaper_changed.connect(() => {
+                _last_strip_lum = -1.0;
                 update_topbar_fg_class();
             });
             // Auto-flatten when any window is maximized
@@ -543,53 +549,31 @@ namespace Singularity {
          * "light-bg" CSS class on the panel-window so text/icon colors adapt.
          * In flat-panel mode the wallpaper is hidden so we skip sampling.
          */
+        public static double topbar_lum_threshold = 0.72;
+
+        public static double topbar_strip_fraction(Gdk.Monitor? mon, int fallback_h) {
+            int ph = AppSystem.get_default().shell_panel_height;
+            if (ph <= 0) ph = fallback_h > 0 ? fallback_h : 40;
+            if (mon != null) {
+                var geo = mon.get_geometry();
+                if (geo.height > 0) return (double) ph / (double) geo.height;
+            }
+            return 0.05;
+        }
+
         private void update_topbar_fg_class() {
             if (has_css_class("flat-panel")) {
                 remove_css_class("light-bg");
                 return;
             }
-            string uri = _settings.get_string("background-picture-uri");
-            if (uri == "" || uri == _last_wallpaper_uri) return;
-            _last_wallpaper_uri = uri;
-            string? path = GLib.File.new_for_uri(uri).get_path();
-            if (path == null) { remove_css_class("light-bg"); return; }
-            try {
-                // Scale to a proper thumbnail preserving aspect ratio so the
-                // colour distribution is not distorted by extreme stretching.
-                var pixbuf = new Gdk.Pixbuf.from_file_at_scale(path, 128, 72, true);
-                double lum = _sample_luminance(pixbuf);
-                // WCAG formula: white text is readable when contrast(white,bg) >= 3:1,
-                // i.e. bg_lum <= 0.30.  Use dark text only on genuinely bright bgs.
-                if (lum > 0.30) {
-                    add_css_class("light-bg");
-                } else {
-                    remove_css_class("light-bg");
-                }
-            } catch (Error e) {
-                remove_css_class("light-bg");
+            double frac = topbar_strip_fraction(gdk_monitor, height_request);
+            if (_last_strip_lum < 0.0 || frac != _last_frac) {
+                double lum = WallpaperManager.get_default().top_band_luminance(frac);
+                if (lum >= 0.0) { _last_strip_lum = lum; _last_frac = frac; }
             }
-        }
-
-        private static double _sample_luminance(Gdk.Pixbuf pixbuf) {
-            int channels  = pixbuf.get_n_channels();
-            int rowstride  = pixbuf.get_rowstride();
-            unowned uint8[] data = pixbuf.get_pixels();
-            int width  = pixbuf.get_width();
-            int height = pixbuf.get_height();
-            double total = 0.0;
-            int count    = 0;
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
-                    int idx = y * rowstride + x * channels;
-                    double r = data[idx]     / 255.0;
-                    double g = data[idx + 1] / 255.0;
-                    double b = data[idx + 2] / 255.0;
-                    // ITU-R BT.709 perceived luminance
-                    total += 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                    count++;
-                }
-            }
-            return count > 0 ? total / count : 0.0;
+            _last_strip_light = (_last_strip_lum >= 0.0) && (_last_strip_lum > topbar_lum_threshold);
+            if (_last_strip_light) add_css_class("light-bg");
+            else remove_css_class("light-bg");
         }
 
         private Widget create_corner_hint(string corner_class) {

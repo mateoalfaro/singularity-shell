@@ -9,6 +9,7 @@ namespace Singularity {
         private GLib.Settings settings;
         public string? wallpaper_path { get; private set; }
         public Texture? display_texture { get; private set; }
+        private Pixbuf? _display_pixbuf;
         public Texture? preview_texture { get; private set; }
         public Texture? medium_texture { get; private set; }
         private string? _cached_path = null;
@@ -115,7 +116,7 @@ namespace Singularity {
                         _mutex.unlock();
                         if (!still_valid) return false;
 
-                        if (pb_display != null) display_texture = Texture.for_pixbuf(pb_display);
+                        if (pb_display != null) { display_texture = Texture.for_pixbuf(pb_display); _display_pixbuf = pb_display; }
                         if (pb_medium != null) medium_texture = Texture.for_pixbuf(pb_medium);
                         if (pb_small != null) preview_texture = Texture.for_pixbuf(pb_small);
                         message("Wallpaper loaded: %s", load_path);
@@ -137,6 +138,61 @@ namespace Singularity {
             } catch (Error e) {
             }
             return null;
+        }
+
+        public bool top_band_rect(double frac, out int x, out int y, out int w, out int h) {
+            x = 0; y = 0; w = 0; h = 0;
+            var pb = _display_pixbuf;
+            if (pb == null) return false;
+            if (frac <= 0.0) frac = 0.05;
+            if (frac > 1.0) frac = 1.0;
+            int dw = pb.get_width();
+            int dh = pb.get_height();
+            int tw = 0, th = 0;
+            get_display_target_size(out tw, out th);
+            if (tw <= 0 || tw > dw) tw = dw;
+            if (th <= 0 || th > dh) th = dh;
+            x = (dw - tw) / 2;
+            y = (dh - th) / 2;
+            w = tw;
+            h = int.min(int.max(1, (int) Math.ceil(frac * th)), dh - y);
+            return true;
+        }
+
+        public double top_band_luminance(double frac) {
+            int x, y, w, h;
+            if (!top_band_rect(frac, out x, out y, out w, out h)) return -1.0;
+            var pb = _display_pixbuf;
+            int channels = pb.get_n_channels();
+            int rowstride = pb.get_rowstride();
+            unowned uint8[] data = pb.get_pixels();
+            double total = 0.0;
+            int count = 0;
+            for (int yy = y; yy < y + h; yy++) {
+                for (int xx = x; xx < x + w; xx++) {
+                    int idx = yy * rowstride + xx * channels;
+                    double r = data[idx]     / 255.0;
+                    double g = data[idx + 1] / 255.0;
+                    double b = data[idx + 2] / 255.0;
+                    total += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    count++;
+                }
+            }
+            return count > 0 ? total / count : -1.0;
+        }
+
+        public Pixbuf? top_band_pixbuf(double frac) {
+            int x, y, w, h;
+            if (!top_band_rect(frac, out x, out y, out w, out h)) return null;
+            return new Pixbuf.subpixbuf(_display_pixbuf, x, y, w, h);
+        }
+
+        public bool get_display_dimensions(out int w, out int h) {
+            w = 0; h = 0;
+            if (_display_pixbuf == null) return false;
+            w = _display_pixbuf.get_width();
+            h = _display_pixbuf.get_height();
+            return true;
         }
 
         private void get_display_target_size(out int target_w, out int target_h) {

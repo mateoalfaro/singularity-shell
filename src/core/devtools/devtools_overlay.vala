@@ -64,6 +64,9 @@ namespace Singularity {
             add_button ("tree",   "Widget Tree");
             add_button ("events", "Events");
 
+            add_section ("ANALYSIS");
+            add_button ("background", "Background");
+
             _canvas.put (_sidebar, 0, 0);
         }
 
@@ -147,7 +150,102 @@ namespace Singularity {
                 case "events":
                     build_events (panel);
                     break;
+                case "background":
+                    build_background (panel);
+                    break;
             }
+        }
+
+        private void build_background (DevPanel panel) {
+            var holder = new Box (Orientation.VERTICAL, 4);
+
+            var refresh = new Button.with_label ("refresh");
+            refresh.add_css_class ("devtools-sidebar-btn");
+            refresh.has_frame = false;
+            refresh.halign = Align.START;
+            refresh.clicked.connect (() => { clear_box (holder); fill_background (holder); });
+            panel.content.append (refresh);
+
+            var thr_box = new Box (Orientation.HORIZONTAL, 6);
+            var thr_lbl = new Label ("threshold");
+            thr_lbl.add_css_class ("devtools-note");
+            thr_lbl.valign = Align.CENTER;
+            var scale = new Scale.with_range (Orientation.HORIZONTAL, 0.0, 1.0, 0.01);
+            scale.set_value (Singularity.Panel.topbar_lum_threshold);
+            scale.draw_value = true;
+            scale.value_pos = PositionType.RIGHT;
+            scale.hexpand = true;
+            scale.width_request = 180;
+            scale.value_changed.connect (() => {
+                Singularity.Panel.topbar_lum_threshold = scale.get_value ();
+                WallpaperManager.get_default ().wallpaper_changed ();
+                clear_box (holder);
+                fill_background (holder);
+            });
+            thr_box.append (thr_lbl);
+            thr_box.append (scale);
+            panel.content.append (thr_box);
+
+            panel.content.append (holder);
+            fill_background (holder);
+        }
+
+        private void fill_background (Box dest) {
+            var wm = WallpaperManager.get_default ();
+            int dw, dh;
+            if (!wm.get_display_dimensions (out dw, out dh)) {
+                var note = new Label ("no wallpaper pixbuf loaded");
+                note.add_css_class ("devtools-note");
+                note.halign = Align.START;
+                dest.append (note);
+                return;
+            }
+
+            var mon = Singularity.Panel.find_primary_monitor ();
+            int ph = Singularity.AppSystem.get_default ().shell_panel_height;
+            Gdk.Rectangle geo = { 0, 0, 0, 0 };
+            if (mon != null) geo = mon.get_geometry ();
+            double frac = Singularity.Panel.topbar_strip_fraction (mon, 40);
+
+            int bx, by, bw, bh;
+            wm.top_band_rect (frac, out bx, out by, out bw, out bh);
+            double lum = wm.top_band_luminance (frac);
+            double thr = Singularity.Panel.topbar_lum_threshold;
+            bool light = lum > thr;
+
+            dev_row (dest, "monitor", "%dx%d".printf (geo.width, geo.height));
+            dev_row (dest, "panel height", "%d px".printf (ph));
+            dev_row (dest, "strip fraction", "%.4f".printf (frac));
+            dev_row (dest, "display pixbuf", "%dx%d".printf (dw, dh));
+            dev_row (dest, "sampled band", "x%d y%d  %dx%d".printf (bx, by, bw, bh));
+            dev_row (dest, "luminance", "%.4f".printf (lum));
+            dev_row (dest, "threshold", "%.3f".printf (thr));
+            dev_row (dest, "decision", light ? "light-bg (dark text)" : "default (white text)");
+
+            var band = wm.top_band_pixbuf (frac);
+            if (band != null) {
+                var preview = new Label ("what the algorithm sees:");
+                preview.add_css_class ("devtools-note");
+                preview.halign = Align.START;
+                preview.margin_top = 6;
+                dest.append (preview);
+
+                var pic = new Gtk.Picture.for_pixbuf (band);
+                pic.content_fit = ContentFit.FILL;
+                pic.width_request = 280;
+                pic.height_request = 64;
+                pic.add_css_class ("devtools-band-preview");
+                dest.append (pic);
+            }
+        }
+
+        private void dev_row (Box dest, string key, string val) {
+            var l = new Label (key + ": " + val);
+            l.add_css_class ("devtools-note");
+            l.halign = Align.START;
+            l.xalign = 0;
+            l.selectable = true;
+            dest.append (l);
         }
 
         private void build_dock_vars (DevPanel panel) {
