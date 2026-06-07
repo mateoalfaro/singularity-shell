@@ -718,6 +718,7 @@ static void toplevel_handle_state(void *data, struct zwlr_foreign_toplevel_handl
     uint32_t *entry;
     int is_maximized = 0;
     int is_fullscreen = 0;
+    int is_minimized = 0;
     wl_array_for_each(entry, state) {
         if (*entry == ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_ACTIVATED) {
             if (ctx.focused_cb) {
@@ -730,9 +731,12 @@ static void toplevel_handle_state(void *data, struct zwlr_foreign_toplevel_handl
         if (*entry == ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_FULLSCREEN) {
             is_fullscreen = 1;
         }
+        if (*entry == ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_MINIMIZED) {
+            is_minimized = 1;
+        }
     }
     if (ctx.state_cb) {
-        ctx.state_cb(handle, is_maximized, is_fullscreen, ctx.user_data);
+        ctx.state_cb(handle, is_maximized, is_fullscreen, is_minimized, ctx.user_data);
     }
 }
 static void toplevel_handle_done(void *data, struct zwlr_foreign_toplevel_handle_v1 *handle) {}

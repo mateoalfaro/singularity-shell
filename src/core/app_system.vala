@@ -113,6 +113,7 @@ namespace Singularity {
             public Icon? gicon;
             public bool is_maximized;
             public bool is_fullscreen;
+            public bool is_minimized;
             public uint snap_type = 0; // last snap type applied by TilingManager (SNAP_* constants)
 
             public Window(void* handle, string app_id) {
@@ -123,6 +124,7 @@ namespace Singularity {
                 this.gicon = null;
                 this.is_maximized = false;
                 this.is_fullscreen = false;
+                this.is_minimized = false;
             }
         }
 
@@ -236,18 +238,22 @@ namespace Singularity {
             }
         }
 
-        private static void on_app_state_changed(void* handle, int is_maximized, int is_fullscreen, void* data) {
+        private static void on_app_state_changed(void* handle, int is_maximized, int is_fullscreen, int is_minimized, void* data) {
             var self = (AppSystem)data;
             foreach (var win in self.windows) {
                 if (win.handle == handle) {
                     bool was_maximized = win.is_maximized;
                     bool was_fullscreen = win.is_fullscreen;
+                    bool was_minimized = win.is_minimized;
                     win.is_maximized = (is_maximized != 0);
                     win.is_fullscreen = (is_fullscreen != 0);
+                    win.is_minimized = (is_minimized != 0);
                     if (was_maximized != win.is_maximized || was_fullscreen != win.is_fullscreen) {
                         PreviewCache.get_default().invalidate(handle);
                     }
-                    if (was_maximized != win.is_maximized) {
+                    // A maximized window that gets minimized stops covering the
+                    // panel/dock, so re-evaluate maximize-driven state too.
+                    if (was_maximized != win.is_maximized || was_minimized != win.is_minimized) {
                         self.any_maximized_changed();
                     }
                     if (was_fullscreen != win.is_fullscreen) {
@@ -262,7 +268,7 @@ namespace Singularity {
 
         public bool has_any_maximized_window() {
             foreach (var win in windows) {
-                if (win.is_maximized) return true;
+                if (win.is_maximized && !win.is_minimized) return true;
             }
             return false;
         }
@@ -287,7 +293,7 @@ namespace Singularity {
                 (target_conn != null && primary.get_connector() == target_conn));
 
             foreach (var win in windows) {
-                if (!win.is_maximized) continue;
+                if (!win.is_maximized || win.is_minimized) continue;
                 var wmon = Singularity.wayland_get_window_monitor(win.handle);
                 if (wmon == null) {
                     // Unresolvable -> assume primary monitor.

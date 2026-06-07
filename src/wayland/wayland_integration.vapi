@@ -9,7 +9,7 @@ namespace Singularity {
     [CCode (has_target = false)]
     public delegate void AppTitleChangedCallback(void* handle, string title, void* data);
     [CCode (has_target = false)]
-    public delegate void AppStateChangedCallback(void* handle, int is_maximized, int is_fullscreen, void* data);
+    public delegate void AppStateChangedCallback(void* handle, int is_maximized, int is_fullscreen, int is_minimized, void* data);
     
     [CCode (has_target = false)]
     public delegate void WorkspaceCreatedCallback(void* handle, string name, void* data);

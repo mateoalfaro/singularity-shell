@@ -8,7 +8,7 @@ typedef void (*AppOpenedCallback)(void* handle, const char* app_id, void* data);
 typedef void (*AppClosedCallback)(void* handle, void* data);
 typedef void (*AppFocusedCallback)(void* handle, void* data);
 typedef void (*AppTitleChangedCallback)(void* handle, const char* title, void* data);
-typedef void (*AppStateChangedCallback)(void* handle, int is_maximized, int is_fullscreen, void* data);
+typedef void (*AppStateChangedCallback)(void* handle, int is_maximized, int is_fullscreen, int is_minimized, void* data);
 
 typedef void (*WorkspaceCreatedCallback)(void* handle, const char* name, void* data);
 typedef void (*WorkspaceDestroyedCallback)(void* handle, void* data);
