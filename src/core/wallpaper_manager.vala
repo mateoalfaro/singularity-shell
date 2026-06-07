@@ -105,6 +105,10 @@ namespace Singularity {
                         pb_small = new Pixbuf.from_file_at_scale(load_path, 120, 67, false);
                     } catch (Error e) {}
 
+                    pb_display = ensure_alpha(pb_display);
+                    pb_medium = ensure_alpha(pb_medium);
+                    pb_small = ensure_alpha(pb_small);
+
                     _mutex.lock();
                     bool stale = (serial != _load_serial);
                     _mutex.unlock();
@@ -116,8 +120,8 @@ namespace Singularity {
                         _mutex.unlock();
                         if (!still_valid) return false;
 
-                        if (pb_display != null) { display_texture = Texture.for_pixbuf(pb_display); _display_pixbuf = pb_display; }
-                        if (pb_medium != null) medium_texture = Texture.for_pixbuf(pb_medium);
+                        if (pb_display != null) display_texture = Texture.for_pixbuf(pb_display);
+                        if (pb_medium != null) { medium_texture = Texture.for_pixbuf(pb_medium); _display_pixbuf = pb_medium.copy(); }
                         if (pb_small != null) preview_texture = Texture.for_pixbuf(pb_small);
                         message("Wallpaper loaded: %s", load_path);
                         wallpaper_changed();
@@ -215,6 +219,12 @@ namespace Singularity {
             }
         }
 
+        private static Pixbuf? ensure_alpha(Pixbuf? pb) {
+            if (pb == null) return null;
+            if (pb.get_has_alpha()) return pb;
+            return pb.add_alpha(false, 0, 0, 0);
+        }
+
         private Pixbuf load_display_pixbuf(string path, int target_w, int target_h) throws Error {
             if (target_w <= 0 || target_h <= 0) {
                 target_w = 1920;
@@ -230,8 +240,15 @@ namespace Singularity {
 
             double scale = double.max((double)target_w / (double)src_w,
                                       (double)target_h / (double)src_h);
+            if (scale > 1.0) scale = 1.0;
             int decode_w = int.max(1, (int)Math.ceil(src_w * scale));
             int decode_h = int.max(1, (int)Math.ceil(src_h * scale));
+            int max_dim = 4096;
+            if (decode_w > max_dim || decode_h > max_dim) {
+                double clamp = double.min((double)max_dim / decode_w, (double)max_dim / decode_h);
+                decode_w = int.max(1, (int)(decode_w * clamp));
+                decode_h = int.max(1, (int)(decode_h * clamp));
+            }
             return new Pixbuf.from_file_at_scale(path, decode_w, decode_h, true);
         }
     }
