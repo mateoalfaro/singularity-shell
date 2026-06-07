@@ -58,6 +58,21 @@ namespace Singularity {
             });
             ((Gtk.Widget)this).add_controller(key_controller);
 
+            var scroll_controller = new EventControllerScroll(EventControllerScrollFlags.VERTICAL | EventControllerScrollFlags.DISCRETE);
+            double scroll_accum = 0.0;
+            scroll_controller.scroll.connect((dx, dy) => {
+                scroll_accum += dy;
+                if (scroll_accum <= -1.0) {
+                    cycle_viewed_workspace(-1);
+                    scroll_accum = 0.0;
+                } else if (scroll_accum >= 1.0) {
+                    cycle_viewed_workspace(1);
+                    scroll_accum = 0.0;
+                }
+                return true;
+            });
+            ((Gtk.Widget)this).add_controller(scroll_controller);
+
             add_css_class("singularity");
             add_css_class("singularity-shell");
             add_css_class("overview-window");
