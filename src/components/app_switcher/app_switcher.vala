@@ -128,6 +128,7 @@ namespace Singularity {
         private int selected_index = 0;
         private GLib.Settings settings;
         private bool _list_mode = true;
+        private uint _tap_check_id = 0;
 
         public AppSwitcher(Gtk.Application app) {
             Object(
@@ -225,6 +226,32 @@ namespace Singularity {
                 // Always activate on Alt release - the DBus round-trip overhead
                 // (~100-150 ms) means time-based thresholds cause premature dismissals.
                 activate_selected();
+            }
+        }
+
+        // A quick Alt-Tab tap can release Alt before this layer-shell surface
+        // acquires keyboard focus (the DBus round-trip costs ~100-150 ms), so
+        // on_key_released never fires and the switcher stays up (issue #114).
+        // Once focused, the compositor reports the currently-held modifiers, so
+        // shortly after presenting we check: if Alt is no longer down, the user
+        // tapped - activate the selection and dismiss.
+        private void schedule_tap_check() {
+            cancel_tap_check();
+            _tap_check_id = GLib.Timeout.add(220, () => {
+                _tap_check_id = 0;
+                if (!visible) return GLib.Source.REMOVE;
+                var seat = get_display().get_default_seat();
+                var kbd = seat != null ? seat.get_keyboard() : null;
+                if (kbd != null && (kbd.get_modifier_state() & Gdk.ModifierType.ALT_MASK) == 0)
+                    activate_selected();
+                return GLib.Source.REMOVE;
+            });
+        }
+
+        private void cancel_tap_check() {
+            if (_tap_check_id != 0) {
+                GLib.Source.remove(_tap_check_id);
+                _tap_check_id = 0;
             }
         }
 
@@ -350,6 +377,7 @@ namespace Singularity {
         }
 
         private void dismiss() {
+            cancel_tap_check();
             // Remove grid items first so SwitcherGridItem.on_destroy() cancels
             // any in-flight captures before the window is hidden.
             while (items_box.get_first_child() != null)
@@ -366,7 +394,9 @@ namespace Singularity {
                 rebuild_ui();
                 opacity = 1;
                 present();
+                schedule_tap_check();
             } else {
+                cancel_tap_check();
                 cycle(1);
             }
         }
@@ -380,7 +410,9 @@ namespace Singularity {
                 rebuild_ui();
                 opacity = 1;
                 present();
+                schedule_tap_check();
             } else {
+                cancel_tap_check();
                 cycle(-1);
             }
         }
