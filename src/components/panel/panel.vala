@@ -179,15 +179,7 @@ namespace Singularity {
                     if (app_info != null) {
                         app_title_label.label = app_info.get_name();
                     } else {
-                        string title = app_id;
-                        if (title.contains(".")) {
-                            var parts = title.split(".");
-                            title = parts[parts.length - 1];
-                        }
-                        if (title.length > 0) {
-                            title = title.substring(0, 1).up() + title.substring(1);
-                        }
-                        app_title_label.label = title;
+                        app_title_label.label = humanize_app_id(app_id);
                     }
                     app_title_label.visible = true;
                 });
@@ -559,6 +551,21 @@ namespace Singularity {
                 if (geo.height > 0) return (double) ph / (double) geo.height;
             }
             return 0.05;
+        }
+
+        private string humanize_app_id(string app_id) {
+            string title = app_id;
+            if (title.down().has_suffix(".exe")) {
+                title = title.substring(0, title.length - 4);
+                if (title.contains("\\")) { var p = title.split("\\"); title = p[p.length - 1]; }
+                if (title.contains("/"))  { var p = title.split("/");  title = p[p.length - 1]; }
+            } else if (title.contains(".")) {
+                var parts = title.split(".");
+                title = parts[parts.length - 1];
+            }
+            title = title.replace("_", " ").replace("-", " ").strip();
+            if (title.length > 0) title = title.substring(0, 1).up() + title.substring(1);
+            return title;
         }
 
         private void update_topbar_fg_class() {
