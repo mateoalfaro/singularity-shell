@@ -449,12 +449,36 @@ namespace Singularity {
             }
         }
 
+        private void launch_with(AppInfo app, File file) {
+            try {
+                var uris = new List<string>();
+                uris.append(file.get_uri());
+                app.launch_uris(uris, Gdk.Display.get_default().get_app_launch_context());
+            } catch (Error e) {
+                warning("Failed to open with %s: %s", app.get_name(), e.message);
+            }
+        }
+
         private void show_context_menu(Widget widget, File file, FileInfo info) {
             var menu = new Singularity.Widgets.ContextMenu(widget);
             menu.add_item("Open", "document-open-symbolic", () => {
                 open_file(file, info);
             });
             string content_type = info.get_content_type() ?? "";
+            if (info.get_file_type() != FileType.DIRECTORY && content_type != "") {
+                var handlers = AppInfo.get_recommended_for_type(content_type);
+                if (handlers == null || handlers.length() == 0)
+                    handlers = AppInfo.get_all_for_type(content_type);
+                if (handlers != null && handlers.length() > 0) {
+                    var submenu = menu.add_submenu("Open With", "document-open-symbolic");
+                    foreach (var ai in handlers) {
+                        var app = ai;
+                        submenu.add_item_gicon(app.get_name(), app.get_icon(), () => {
+                            launch_with(app, file);
+                        });
+                    }
+                }
+            }
             if (content_type.has_prefix("image/")) {
                 menu.add_item("Set as Wallpaper", "preferences-desktop-wallpaper-symbolic", () => {
                     settings.set_string("background-picture-uri", file.get_uri());
