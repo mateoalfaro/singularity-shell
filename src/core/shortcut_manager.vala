@@ -263,6 +263,8 @@ namespace Singularity {
             for (int i = 1; i <= 4; i++) {
                 xml.append_printf("    <keybind key=\"C-A-S-%d\"><action name=\"SendToDesktop\" to=\"%d\" /></keybind>\n", i, i);
             }
+            // Close the focused window (Alt-F4)
+            xml.append("    <keybind key=\"A-F4\"><action name=\"Close\" /></keybind>\n");
             // Window switcher (Alt-Tab)
             xml.append_printf("    <keybind key=\"A-Tab\"><action name=\"Execute\"><command>%s switch_windows_next</command></action></keybind>\n", dbus_shorts);
             xml.append_printf("    <keybind key=\"A-S-Tab\"><action name=\"Execute\"><command>%s switch_windows_prev</command></action></keybind>\n", dbus_shorts);
