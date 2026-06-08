@@ -553,17 +553,40 @@ namespace Singularity {
             return 0.05;
         }
 
+        private bool str_has_letter(string s) {
+            for (int i = 0; i < s.length; i++) {
+                char c = s[i];
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) return true;
+            }
+            return false;
+        }
+
         private string humanize_app_id(string app_id) {
-            string title = app_id;
+            string title = app_id.strip();
             if (title.down().has_suffix(".exe")) {
                 title = title.substring(0, title.length - 4);
                 if (title.contains("\\")) { var p = title.split("\\"); title = p[p.length - 1]; }
                 if (title.contains("/"))  { var p = title.split("/");  title = p[p.length - 1]; }
+            } else if (title.contains(" ")) {
+                var words = title.split(" ");
+                var sb = new StringBuilder();
+                foreach (string word in words) {
+                    if (word.length > 0 && word[0] >= '0' && word[0] <= '9') break;
+                    if (sb.len > 0) sb.append_c(' ');
+                    sb.append(word);
+                }
+                title = (sb.len > 0) ? sb.str : words[0];
             } else if (title.contains(".")) {
                 var parts = title.split(".");
-                title = parts[parts.length - 1];
+                string cand = parts[parts.length - 1];
+                if (!str_has_letter(cand)) {
+                    for (int i = parts.length - 1; i >= 0; i--) {
+                        if (str_has_letter(parts[i])) { cand = parts[i]; break; }
+                    }
+                }
+                title = cand;
             }
-            title = title.replace("_", " ").replace("-", " ").strip();
+            title = title.replace("*", "").replace("_", " ").replace("-", " ").strip();
             if (title.length > 0) title = title.substring(0, 1).up() + title.substring(1);
             return title;
         }
