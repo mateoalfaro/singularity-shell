@@ -80,6 +80,7 @@ namespace Singularity {
 
             nav_box.append(create_settings_row(_("Network"), "network-wireless-symbolic", "network"));
             nav_box.append(create_settings_row(_("Apps"), "view-app-grid-symbolic", "apps"));
+            nav_box.append(create_settings_row(_("Autostart"), "system-run-symbolic", "autostart"));
             nav_box.append(create_settings_row(_("Users"), "system-users-symbolic", "users"));
             nav_box.append(create_settings_row(_("Online Accounts"), "avatar-default-symbolic", "accounts"));
             nav_box.append(create_settings_row(_("Displays"), "video-display-symbolic", "displays"));
@@ -224,6 +225,7 @@ namespace Singularity {
                 case "displays": case "region": case "datetime": case "desktop":
                 case "sound": case "bluetooth": case "keyboard": case "developer":
                 case "accessibility": case "plugins": case "performance": case "system":
+                case "autostart":
                     return true;
             }
             return false;
@@ -243,6 +245,7 @@ namespace Singularity {
                 case "bluetooth": return "bluetooth-active-symbolic";
                 case "keyboard": return "input-keyboard-symbolic";
                 case "developer": return "applications-engineering-symbolic";
+                case "autostart": return "system-run-symbolic";
                 case "accessibility": return "preferences-desktop-accessibility-symbolic";
                 case "plugins": return "emblem-system-symbolic";
                 case "performance": return "power-profile-performance-symbolic";
@@ -252,7 +255,7 @@ namespace Singularity {
         }
 
         private string[] get_searchable_pages() {
-            return { "network", "apps", "users", "accounts", "displays", "region", "datetime",
+            return { "network", "apps", "autostart", "users", "accounts", "displays", "region", "datetime",
                      "desktop", "sound", "bluetooth", "keyboard", "developer", "accessibility",
                      "plugins", "performance", "system" };
         }
@@ -412,6 +415,7 @@ namespace Singularity {
                 case "bluetooth": page = new Singularity.SidebarPages.BluetoothPage(this); break;
                 case "keyboard": page = new KeyboardPage(this); break;
                 case "developer": page = new DeveloperPage(this); break;
+                case "autostart": page = new Singularity.SidebarPages.AutostartPage(this); break;
                 case "accessibility": page = new Singularity.SidebarPages.AccessibilityPage(this); break;
                 case "plugins": page = new Singularity.PluginsPage(this); break;
                 case "performance": page = new Singularity.SidebarPages.PerformancePage(this); break;
@@ -480,6 +484,7 @@ namespace Singularity {
         }
 
         public void go_home() {
+            if (search_entry != null) search_entry.text = "";
             if (split_mode) {
                 if (folded) main_stack.visible_child_name = "sidebar";
                 else navigate_to("desktop");

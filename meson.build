@@ -284,6 +284,7 @@ singularity_core_sources = files(
     'src/components/sidebar/pages/keyboard_page.vala',
     'src/components/sidebar/pages/accessibility_page.vala',
     'src/components/sidebar/pages/apps_page.vala',
+    'src/components/sidebar/pages/autostart_page.vala',
     'src/components/sidebar/pages/app_details_page.vala',
     'src/components/sidebar/pages/default_apps_page.vala',
     'src/components/sidebar/pages/calendar_page.vala',
