@@ -17,6 +17,8 @@ namespace Singularity {
         private const int ICON_WIDTH = 90;
         private const int ICON_HEIGHT = 100;
         private const int GRID_SIZE = 100;
+        private const int ORIGIN_X = 24;
+        private const int ORIGIN_Y = 24;
         private Widget? placeholder = null;
         private int placeholder_x = 0;
         private int placeholder_y = 0;
@@ -89,8 +91,8 @@ namespace Singularity {
             });
             drop_motion.motion.connect((x, y) => {
                 if (placeholder == null) return;
-                int snap_x = ((int)x / GRID_SIZE) * GRID_SIZE + 24;
-                int snap_y = ((int)y / GRID_SIZE) * GRID_SIZE + 24;
+                int snap_x = snap_axis(x, ORIGIN_X);
+                int snap_y = snap_axis(y, ORIGIN_Y);
                 if (snap_x != placeholder_x || snap_y != placeholder_y) {
                     placeholder_x = snap_x;
                     placeholder_y = snap_y;
@@ -112,12 +114,17 @@ namespace Singularity {
             });
             drop_target.drop.connect((value, x, y) => {
                 string filename = value.get_string();
-                int snap_x = ((int)x / GRID_SIZE) * GRID_SIZE + 24;
-                int snap_y = ((int)y / GRID_SIZE) * GRID_SIZE + 24;
+                int snap_x = snap_axis(x, ORIGIN_X);
+                int snap_y = snap_axis(y, ORIGIN_Y);
                 if (placeholder != null && placeholder.parent != null) {
                     icon_container.remove(placeholder);
                 }
                 placeholder = null;
+                placeholder_x = 0;
+                placeholder_y = 0;
+                // Never stack on an existing icon: if the target cell is taken
+                // by a different icon, slide to the nearest free cell.
+                find_free_cell(ref snap_x, ref snap_y, filename);
                 Widget? child = icon_container.get_first_child();
                 while (child != null) {
                     var box = child as Box;
@@ -133,6 +140,45 @@ namespace Singularity {
             });
             icon_container.add_controller(drop_target);
             icon_container.add_controller(drop_motion);
+        }
+
+        // Single grid lattice shared by drag-drop and auto-placement so the
+        // two never land on mismatched baselines (issue #41).
+        private int snap_axis(double v, int origin) {
+            int cell = (int)Math.lround((v - origin) / (double)GRID_SIZE);
+            if (cell < 0) cell = 0;
+            return cell * GRID_SIZE + origin;
+        }
+
+        private int bottom_limit() {
+            int h = icon_container.get_height();
+            if (h <= 0) h = 900;
+            return h - ICON_HEIGHT;
+        }
+
+        private bool cell_taken(int sx, int sy, string? exclude) {
+            bool taken = false;
+            icon_positions.foreach((name, pos) => {
+                if (pos == null) return;
+                if (exclude != null && name == exclude) return;
+                if (pos.x == sx && pos.y == sy) taken = true;
+            });
+            return taken;
+        }
+
+        // Walk down the column from (sx,sy), wrapping to the next column when
+        // it runs off the bottom, until a free cell is found.
+        private void find_free_cell(ref int sx, ref int sy, string? exclude) {
+            int limit = bottom_limit();
+            int guard = 0;
+            while (cell_taken(sx, sy, exclude) && guard < 4096) {
+                sy += GRID_SIZE;
+                if (sy > limit) {
+                    sy = ORIGIN_Y;
+                    sx += GRID_SIZE;
+                }
+                guard++;
+            }
         }
 
         private void shift_icon_at_position(int x, int y) {
@@ -242,31 +288,33 @@ namespace Singularity {
                 var desktop = File.new_for_path(desktop_path);
                 if (!desktop.query_exists()) return;
                 var enumerator = desktop.enumerate_children("standard::*,time::modified", FileQueryInfoFlags.NONE);
-                var used = new HashTable<string, bool>(str_hash, str_equal);
-                icon_positions.foreach((n, p) => {
-                    if (p != null) used.insert("%d,%d".printf(p.x, p.y), true);
-                });
+                // Rebuild placement from scratch onto the shared lattice so any
+                // saved off-grid or overlapping positions are resolved.
+                var old_positions = icon_positions;
+                icon_positions = new HashTable<string, IconPosition?>(str_hash, str_equal);
+                var entries = new GLib.List<FileInfo>();
                 FileInfo? info;
                 while ((info = enumerator.next_file()) != null) {
                     string name = info.get_display_name();
                     if (name.has_prefix(".")) continue;
+                    entries.append(info);
+                }
+                entries.sort((a, b) => GLib.strcmp(a.get_display_name(), b.get_display_name()));
+                foreach (var fi in entries) {
+                    string name = fi.get_display_name();
                     var file = desktop.get_child(name);
                     int x, y;
-                    IconPosition? saved_pos = icon_positions.lookup(name);
+                    IconPosition? saved_pos = old_positions.lookup(name);
                     if (saved_pos != null) {
-                        x = saved_pos.x;
-                        y = saved_pos.y;
+                        x = snap_axis(saved_pos.x, ORIGIN_X);
+                        y = snap_axis(saved_pos.y, ORIGIN_Y);
                     } else {
-                        x = 24;
-                        y = 48;
-                        while (used.contains("%d,%d".printf(x, y))) {
-                            y += GRID_SIZE;
-                            if (y > 800) { y = 48; x += GRID_SIZE; }
-                        }
-                        icon_positions.insert(name, new IconPosition(x, y));
+                        x = ORIGIN_X;
+                        y = ORIGIN_Y;
                     }
-                    used.insert("%d,%d".printf(x, y), true);
-                    add_icon(file, info, x, y);
+                    find_free_cell(ref x, ref y, null);
+                    icon_positions.insert(name, new IconPosition(x, y));
+                    add_icon(file, fi, x, y);
                 }
                 save_positions();
             } catch (Error e) {
