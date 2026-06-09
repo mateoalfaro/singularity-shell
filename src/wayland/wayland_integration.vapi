@@ -124,4 +124,7 @@ namespace Singularity {
 
     [CCode (cname = "singularity_xwayland_icon", cheader_filename = "xwl_icon.h")]
     public Gdk.Texture? xwayland_icon(string? app_id, string? title);
+
+    [CCode (cname = "singularity_xwayland_active_window", cheader_filename = "xwl_icon.h")]
+    public uint32 xwayland_active_window();
 }

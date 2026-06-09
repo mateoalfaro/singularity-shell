@@ -20,7 +20,7 @@
 
 static xcb_connection_t *conn = NULL;
 static xcb_window_t root = 0;
-static xcb_atom_t A_CLIENT_LIST, A_WM_ICON, A_WM_NAME, A_UTF8;
+static xcb_atom_t A_CLIENT_LIST, A_WM_ICON, A_WM_NAME, A_UTF8, A_ACTIVE_WINDOW;
 
 static xcb_atom_t intern(const char *name) {
     xcb_intern_atom_cookie_t c = xcb_intern_atom(conn, 0, (uint16_t)strlen(name), name);
@@ -37,10 +37,11 @@ static gboolean ensure_conn(void) {
     const xcb_setup_t *setup = xcb_get_setup(conn);
     xcb_screen_t *screen = xcb_setup_roots_iterator(setup).data;
     root = screen->root;
-    A_CLIENT_LIST = intern("_NET_CLIENT_LIST");
-    A_WM_ICON     = intern("_NET_WM_ICON");
-    A_WM_NAME     = intern("_NET_WM_NAME");
-    A_UTF8        = intern("UTF8_STRING");
+    A_CLIENT_LIST   = intern("_NET_CLIENT_LIST");
+    A_WM_ICON       = intern("_NET_WM_ICON");
+    A_WM_NAME       = intern("_NET_WM_NAME");
+    A_UTF8          = intern("UTF8_STRING");
+    A_ACTIVE_WINDOW = intern("_NET_ACTIVE_WINDOW");
     return TRUE;
 }
 
@@ -118,6 +119,20 @@ static GdkTexture *icon_texture(xcb_window_t w) {
     }
     free(r);
     return tex;
+}
+
+/* The XID of the currently active X11 (XWayland) window, or 0 if none. Used to
+ * match the focused toplevel to a dbusmenu RegisterWindow entry, which is keyed
+ * by XID, instead of by the (often wrong for sandboxed apps) process name. */
+uint32_t singularity_xwayland_active_window(void) {
+    if (!ensure_conn()) return 0;
+    xcb_get_property_reply_t *r = get_prop(root, A_ACTIVE_WINDOW, XCB_ATOM_WINDOW, 1);
+    if (!r) return 0;
+    uint32_t xid = 0;
+    if (xcb_get_property_value_length(r) >= 4)
+        xid = *(const uint32_t *)xcb_get_property_value(r);
+    free(r);
+    return xid;
 }
 
 GdkTexture *singularity_xwayland_icon(const char *app_id, const char *title) {

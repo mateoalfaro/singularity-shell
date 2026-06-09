@@ -20,11 +20,29 @@ namespace Singularity {
                 item.child_moved.connect(on_child_moved);
                 item.child_removed.connect(on_child_removed);
                 item.property_changed.connect(on_property_changed);
+                // Apps such as Firefox populate a submenu's children lazily, only
+                // after they receive an aboutToShow. This adapter only ever wraps
+                // a submenu (the root wraps the menubar), so always request it;
+                // without it the submenu stays empty and clicking File/Edit/View
+                // does nothing (#82, #112).
+                if (!is_root) {
+                    item.send_about_to_show(null, null);
+                }
             }
 
             if (is_root) {
                  client.layout_updated.connect(on_layout_updated);
             }
+        }
+
+        // A menu item is a submenu when it advertises child-display "submenu",
+        // or already carries children. The property holds even before the app
+        // has sent the children, so it is the reliable discriminator.
+        private static bool is_submenu(Dbusmenu.Menuitem mi) {
+            string disp = mi.property_get(Dbusmenu.MENUITEM_PROP_CHILD_DISPLAY);
+            if (disp == Dbusmenu.MENUITEM_CHILD_DISPLAY_SUBMENU) return true;
+            unowned List<Dbusmenu.Menuitem> ch = mi.get_children();
+            return ch != null && ch.length() > 0;
         }
 
         private void update_children() {
@@ -83,11 +101,15 @@ namespace Singularity {
                  string val = child.property_get(Dbusmenu.MENUITEM_PROP_LABEL);
                  return new Variant.string(val ?? "");
              }
+             // Submenu parents (File, Edit, ...) must expose only the submenu
+             // link, never an action: a GMenu item carrying both confuses GTK
+             // into activating the parent instead of opening the submenu (#82).
              if (attribute == "action") {
-                 // We use a namespaced action
+                 if (is_root || is_submenu(child)) return null;
                  return new Variant.string("dbusmenu.activate");
              }
              if (attribute == "target") {
+                 if (is_root || is_submenu(child)) return null;
                  return new Variant.int32(child.get_id());
              }
              if (attribute == "enabled") {
@@ -106,7 +128,10 @@ namespace Singularity {
              if (children == null || item_index < 0 || item_index >= children.length()) return null;
 
              var child = children.nth_data(item_index);
-             if (child.get_children() == null || child.get_children().length() == 0) return null;
+             // The root wraps the menubar, so every direct child is a menu (its
+             // children load lazily, so neither the hint nor a child count is
+             // reliable here). Below the root, fall back to the submenu hint.
+             if (!is_root && !is_submenu(child)) return null;
 
              return new DBusMenuAdapter(client, child, false);
         }

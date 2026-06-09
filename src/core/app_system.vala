@@ -712,13 +712,25 @@ namespace Singularity {
                 try_atspi(gen, safe_id, group);
                 return;
             }
+            // Prefer matching by the active window's XID: the app registered
+            // its menu against that window id, and process-name matching fails
+            // for sandboxed apps (they all look like "xdg-dbus-proxy") (#82).
+            string? bus = null;
+            string? path = null;
+            uint32 xid = Singularity.xwayland_active_window();
+            if (xid != 0) {
+                bus = registrar.get_bus_for_window(xid);
+                path = registrar.get_path_for_window(xid);
+            }
             string name_to_try = safe_id;
             if (safe_id.contains(".")) {
                 string[] parts = safe_id.split(".");
                 name_to_try = parts[parts.length - 1].down();
             }
-            string? bus = registrar.get_bus_for_app(name_to_try);
-            string? path = registrar.get_path_for_app(name_to_try);
+            if (bus == null || path == null) {
+                bus = registrar.get_bus_for_app(name_to_try);
+                path = registrar.get_path_for_app(name_to_try);
+            }
             if (bus != null && path != null) {
                 var client = new Dbusmenu.Client(bus, path);
                 dbusmenu_client = client;
@@ -733,7 +745,7 @@ namespace Singularity {
                 emit_menu(gen, dbus_model, group);
                 return;
             }
-            // No dbusmenu – try AT-SPI as last resort
+            // No dbusmenu bus/path, try AT-SPI as last resort
             try_atspi(gen, safe_id, group);
         }
 
@@ -785,10 +797,25 @@ namespace Singularity {
             string captured_id = safe_id.dup();
             AtSpiMenuProvider.build_menu_async(captured_id, group, (menu) => {
                 if (menu_generation != gen) return;
-                if (menu != null && menu.get_n_items() > 0) {
+                bool real = menu != null && model_has_submenu(menu);
+                // Apps with lazy menus (Firefox) expose only top-level leaves
+                // with no children at scan time. Such a menu is not usable, so
+                // do not replace the desktop-entry fallback (File + Window) that
+                // was already emitted with a row of dead buttons (#82, #112).
+                if (real) {
                     emit_menu(gen, menu, group);
                 }
             });
+        }
+
+        // True if any top-level entry of the model opens a submenu. A menubar
+        // that is all leaves is the lazy/empty case, not a real menu.
+        private bool model_has_submenu(MenuModel model) {
+            int n = model.get_n_items();
+            for (int i = 0; i < n; i++) {
+                if (model.get_item_link(i, Menu.LINK_SUBMENU) != null) return true;
+            }
+            return false;
         }
 
         private static string get_os_pretty_name() {
@@ -1097,8 +1124,11 @@ namespace Singularity {
                     window_focused(null);
                     any_fullscreen_changed();
                     // Closing the focused window does not emit a focus event, so
-                    // clear the global menu here too; a new focus event will
-                    // repopulate it if another window takes focus.
+                    // clear the global menu and the panel app-name label here too;
+                    // a new focus event will repopulate them if another window
+                    // takes focus (#150).
+                    current_focused_app_id = "";
+                    app_focused(null);
                     update_menu_model("");
                 }
                 foreach (var ws in workspaces) {

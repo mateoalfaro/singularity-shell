@@ -61,6 +61,17 @@ namespace Singularity {
             return app_path_map.get(app_name);
         }
 
+        // Look up by the X11 window XID the app passed to RegisterWindow. This
+        // is the reliable key: process-name resolution breaks for sandboxed
+        // apps, which all resolve to "xdg-dbus-proxy" (#82).
+        public string? get_bus_for_window(uint32 windowId) {
+            return window_bus_map.get(windowId);
+        }
+
+        public string? get_path_for_window(uint32 windowId) {
+            return window_path_map.get(windowId);
+        }
+
         public signal void menu_registered(uint32 windowId, string busName, string objectPath);
     }
 }
