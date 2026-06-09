@@ -607,7 +607,7 @@ static const struct zsingularity_preview_frame_v1_listener frame_listener = {
     .failed = frame_handle_failed,
 };
 void singularity_wayland_capture_preview(void *toplevel_handle, PreviewCallback callback, void *user_data, GDestroyNotify destroy) {
-    g_message("[PREVIEW] capture_preview called: handle=%p manager=%p shm=%p", toplevel_handle, ctx.preview_manager, ctx.shm);
+    g_debug("[PREVIEW] capture_preview called: handle=%p manager=%p shm=%p", toplevel_handle, ctx.preview_manager, ctx.shm);
     if (!ctx.preview_manager) {
         g_warning("[PREVIEW] Preview manager not available");
         if (callback) callback(0, 0, 0, NULL, user_data);
