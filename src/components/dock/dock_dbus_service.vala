@@ -193,7 +193,7 @@ namespace Singularity {
                 if (!GLib.FileUtils.test(p, GLib.FileTest.EXISTS)) {
                     _icon_overrides.unset(nid);
                 } else {
-                    var pixbuf = new Gdk.Pixbuf.from_file_at_scale(p, 96, 96, true);
+                    var pixbuf = new Gdk.Pixbuf.from_file_at_scale(p, 256, 256, true);
                     _icon_overrides[nid] = Gdk.Texture.for_pixbuf(pixbuf);
                 }
             } catch (Error e) {

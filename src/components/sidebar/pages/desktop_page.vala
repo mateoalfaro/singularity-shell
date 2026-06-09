@@ -707,6 +707,16 @@ namespace Singularity {
             });
             tuning_row.add_row(icon_row);
 
+            // Cursor theme selector (applies to the shell and all apps)
+            string[] cursor_themes = list_cursor_themes();
+            string current_cursor = settings.get_string("cursor-theme");
+            if (current_cursor == "") current_cursor = "Adwaita";
+            var cursor_row = new SelectionRow(_("Cursor Theme"), cursor_themes, current_cursor);
+            cursor_row.selected.connect((val) => {
+                settings.set_string("cursor-theme", val);
+            });
+            tuning_row.add_row(cursor_row);
+
             // Qt theme selector (Kvantum if installed, otherwise informational)
             bool kvantum_available = GLib.Environment.find_program_in_path("kvantummanager") != null;
             var qt_themes = new Gee.ArrayList<string>();
@@ -1221,6 +1231,34 @@ namespace Singularity {
                         string content;
                         try { FileUtils.get_contents(index, out content); } catch (Error e) { continue; }
                         if (!content.contains("Directories=")) continue;
+                        names.add(n);
+                        seen.add(n);
+                    }
+                } catch (FileError e) { continue; }
+            }
+            string[] result = {};
+            for (int i = 0; i < seen.length; i++) result += seen[i];
+            return result;
+        }
+
+        // A cursor theme is any icon directory that contains a cursors/ subdir.
+        private string[] list_cursor_themes() {
+            var seen = new GenericArray<string>();
+            var names = new GLib.GenericSet<string>(str_hash, str_equal);
+            string[] dirs = {
+                GLib.Path.build_filename(Environment.get_home_dir(), ".icons"),
+                GLib.Path.build_filename(Environment.get_user_data_dir(), "icons")
+            };
+            foreach (unowned string d in Environment.get_system_data_dirs())
+                dirs += GLib.Path.build_filename(d, "icons");
+            foreach (string dir in dirs) {
+                try {
+                    var dd = Dir.open(dir);
+                    string? n;
+                    while ((n = dd.read_name()) != null) {
+                        if (names.contains(n)) continue;
+                        string cursors = GLib.Path.build_filename(dir, n, "cursors");
+                        if (!FileUtils.test(cursors, FileTest.IS_DIR)) continue;
                         names.add(n);
                         seen.add(n);
                     }

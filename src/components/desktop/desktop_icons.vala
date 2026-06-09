@@ -32,7 +32,7 @@ namespace Singularity {
             }
         }
 
-        public DesktopIcons(Gtk.Application app) {
+        public DesktopIcons(Gtk.Application app, Gdk.Monitor? monitor = null) {
             Object(application: app);
             settings = new GLib.Settings("dev.sinty.desktop");
             desktop_path = Environment.get_home_dir() + "/Desktop";
@@ -40,6 +40,10 @@ namespace Singularity {
             icon_positions = new HashTable<string, IconPosition?>(str_hash, str_equal);
             _icon_pixbuf_cache = new HashTable<string, Gdk.Pixbuf>(str_hash, str_equal);
             init_for_window(this);
+            // Pin to a specific monitor (the primary). Without this the layer
+            // surface follows the focused output, so the icons jump to another
+            // monitor when it turns on and vanish when it turns off (#105/#56).
+            if (monitor != null) set_monitor(this, monitor);
             set_layer(this, GtkLayerShell.Layer.BACKGROUND);
             set_keyboard_mode(this, GtkLayerShell.KeyboardMode.NONE);
             set_anchor(this, GtkLayerShell.Edge.TOP, true);

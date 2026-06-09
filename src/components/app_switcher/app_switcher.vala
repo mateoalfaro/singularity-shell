@@ -59,9 +59,7 @@ namespace Singularity {
             // Fallback icon shown centered until capture succeeds
             fallback_icon = new Image();
             fallback_icon.pixel_size = 48;
-            if (win.gicon != null) fallback_icon.set_from_gicon(win.gicon);
-            else if (win.icon_name != null && win.icon_name != "") fallback_icon.icon_name = win.icon_name;
-            else fallback_icon.icon_name = "application-x-executable";
+            AppSwitcher.apply_window_icon(fallback_icon, win);
             fallback_icon.halign = Align.CENTER;
             fallback_icon.valign = Align.CENTER;
             fallback_icon.add_css_class("switcher-thumbnail-fallback");
@@ -70,9 +68,7 @@ namespace Singularity {
             // Small icon overlaid at bottom-left
             var small_icon = new Image();
             small_icon.pixel_size = 24;
-            if (win.gicon != null) small_icon.set_from_gicon(win.gicon);
-            else if (win.icon_name != null && win.icon_name != "") small_icon.icon_name = win.icon_name;
-            else small_icon.icon_name = "application-x-executable";
+            AppSwitcher.apply_window_icon(small_icon, win);
             small_icon.halign = Align.START;
             small_icon.valign = Align.END;
             small_icon.margin_start = 4;
@@ -319,10 +315,32 @@ namespace Singularity {
         private Image make_icon(AppSystem.Window win, int size) {
             var icon = new Image();
             icon.pixel_size = size;
-            if (win.gicon != null) icon.set_from_gicon(win.gicon);
-            else if (win.icon_name != null && win.icon_name != "") icon.icon_name = win.icon_name;
-            else icon.icon_name = "application-x-executable";
+            apply_window_icon(icon, win);
             return icon;
+        }
+
+        // Resolve an icon for a window: app icon first, then the window's app_id
+        // (and common variants) looked up in the icon theme, so windows whose
+        // .desktop icon is not themed still show a real icon instead of the
+        // generic placeholder. Wayland toplevels do not expose their own icon.
+        internal static void apply_window_icon(Image icon, AppSystem.Window win) {
+            if (win.gicon != null) { icon.set_from_gicon(win.gicon); return; }
+            if (win.icon_name != null && win.icon_name != "") {
+                icon.icon_name = win.icon_name; return;
+            }
+            var theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default());
+            string aid = win.app_id;
+            if (aid != null && aid != "") {
+                if (theme.has_icon(aid)) { icon.icon_name = aid; return; }
+                string lower = aid.down();
+                if (theme.has_icon(lower)) { icon.icon_name = lower; return; }
+                int dot = aid.last_index_of(".");
+                if (dot >= 0 && dot + 1 < aid.length) {
+                    string tail = aid.substring(dot + 1).down();
+                    if (theme.has_icon(tail)) { icon.icon_name = tail; return; }
+                }
+            }
+            icon.icon_name = "application-x-executable";
         }
 
         private string sanitize_utf8(string? s) {

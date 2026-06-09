@@ -385,6 +385,11 @@ namespace Singularity {
             if (visible && Singularity.DebugManager.get_default().workspaces_pinned)
                 return; // dev aid: keep workspaces open for screenshots
             if (visible) {
+                // Commit the workspace the user navigated to: closing the
+                // overview should leave you on the selected workspace (#108).
+                if (viewed_workspace != null) {
+                    app_system.activate_workspace(viewed_workspace);
+                }
                 if (_anim_out_timer != 0) {
                     GLib.Source.remove(_anim_out_timer);
                     _anim_out_timer = 0;

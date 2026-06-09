@@ -132,6 +132,8 @@ public class SingularityApp : Singularity.ShellApplication, Singularity.Shell.Sh
 
         apply_icon_theme();
         settings.changed["icon-theme"].connect(apply_icon_theme);
+        apply_cursor_theme();
+        settings.changed["cursor-theme"].connect(apply_cursor_theme);
         Singularity.AppSystem.get_default();
         var cal_manager = Singularity.Calendar.CalendarManager.get_default();
         cal_manager.register_provider(new Singularity.Calendar.LocalProvider());
@@ -442,9 +444,14 @@ public class SingularityApp : Singularity.ShellApplication, Singularity.Shell.Sh
 
     private void update_desktop_icons() {
         if (settings.get_boolean("show-desktop-icons")) {
-            if (desktop_icons == null) {
-                desktop_icons = new Singularity.DesktopIcons(this);
+            // Recreate so the surface re-anchors to the current primary monitor;
+            // this also brings the icons back after a monitor is toggled (#56).
+            if (desktop_icons != null) {
+                desktop_icons.destroy();
+                desktop_icons = null;
             }
+            desktop_icons = new Singularity.DesktopIcons(this,
+                Singularity.Panel.find_primary_monitor());
         } else if (desktop_icons != null) {
             desktop_icons.destroy();
             desktop_icons = null;
@@ -808,6 +815,9 @@ public class SingularityApp : Singularity.ShellApplication, Singularity.Shell.Sh
                 Idle.add(() => {
                     backgrounds_update_pending = false;
                     setup_backgrounds();
+                    // Re-anchor the desktop icons to the primary monitor too,
+                    // so they do not jump or vanish when a monitor toggles (#56/#105).
+                    update_desktop_icons();
                     return false;
                 });
             });
@@ -1147,6 +1157,42 @@ window.inactive.shadow.color: %s
             app_switcher.show_and_cycle_prev();
             return false;
         });
+    }
+
+    private void apply_cursor_theme() {
+        string theme = settings.get_string("cursor-theme");
+        if (theme == "") return;
+
+        var gtk_settings = Gtk.Settings.get_default();
+        if (gtk_settings != null) gtk_settings.gtk_cursor_theme_name = theme;
+
+        // Sync to the XDG interface settings (the portal proxies cursor-theme,
+        // so Wayland apps follow) and export XCURSOR_THEME for newly spawned
+        // apps and the compositor.
+        var src = GLib.SettingsSchemaSource.get_default();
+        if (src != null && src.lookup("org.gnome.desktop.interface", true) != null) {
+            var iface = new GLib.Settings("org.gnome.desktop.interface");
+            if (iface.get_string("cursor-theme") != theme)
+                iface.set_string("cursor-theme", theme);
+        }
+        GLib.Environment.set_variable("XCURSOR_THEME", theme, true);
+
+        try {
+            string path = GLib.Path.build_filename(GLib.Environment.get_home_dir(), ".xsettingsd");
+            string body = "";
+            string existing = "";
+            if (GLib.FileUtils.test(path, FileTest.EXISTS) && GLib.FileUtils.get_contents(path, out existing)) {
+                foreach (string line in existing.split("\n")) {
+                    if (line.strip() == "" || line.has_prefix("Gtk/CursorThemeName")) continue;
+                    body += line + "\n";
+                }
+            }
+            body += "Gtk/CursorThemeName \"%s\"\n".printf(theme);
+            GLib.FileUtils.set_contents(path, body);
+            Process.spawn_command_line_async("pkill -HUP xsettingsd");
+        } catch (GLib.Error e) {
+            warning("cursor theme: failed to update xsettingsd: %s", e.message);
+        }
     }
 
     private void apply_icon_theme() {
