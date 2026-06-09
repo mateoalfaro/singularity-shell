@@ -132,7 +132,30 @@ namespace Singularity {
 
         // ---- subprocess side: scan the AT-SPI tree, isolated from the shell ----
 
+        // libatspi calls g_error() (always fatal) the moment it cannot reach the
+        // accessibility bus, so it would abort this process before any try/catch.
+        // Verify the bus is reachable ourselves first and bail cleanly if not.
+        private static bool a11y_bus_reachable() {
+            try {
+                var bus = GLib.Bus.get_sync(BusType.SESSION);
+                var reply = bus.call_sync(
+                    "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress",
+                    null, new VariantType("(s)"), DBusCallFlags.NONE, 1000, null);
+                string addr;
+                reply.get("(s)", out addr);
+                if (addr == null || addr.length == 0) return false;
+                var conn = new DBusConnection.for_address_sync(addr,
+                    DBusConnectionFlags.AUTHENTICATION_CLIENT | DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
+                    null, null);
+                conn.close_sync(null);
+                return true;
+            } catch (Error e) {
+                return false;
+            }
+        }
+
         public static int run_scan(string app_id) {
+            if (!a11y_bus_reachable()) return 0;
             Atspi.init();
             var desktop = Atspi.get_desktop(0);
             if (desktop == null) return 0;
@@ -169,6 +192,7 @@ namespace Singularity {
         }
 
         public static int run_activate(string app_id, string path_csv) {
+            if (!a11y_bus_reachable()) return 1;
             Atspi.init();
             var desktop = Atspi.get_desktop(0);
             if (desktop == null) return 1;
