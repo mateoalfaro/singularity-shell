@@ -10,6 +10,7 @@ namespace Singularity {
         private FlowBox grid;
         private Entry name_entry;
         private Box root_box;
+        private Box card;
         private uint _close_timer = 0;
         private ulong _folders_signal_id = 0;
 
@@ -35,10 +36,31 @@ namespace Singularity {
             add_css_class("folder-overlay-window");
             add_css_class("singularity");
 
-            // Dim background - close on click outside card
+            // Dim background - close only when the press lands outside the card.
+            // We must not CLAIM presses on the card (that would kill the app
+            // buttons' own click gestures), so instead we hit-test here (#51).
             var bg_click = new GestureClick();
-            bg_click.pressed.connect((n, x, y) => close_overlay());
+            bg_click.pressed.connect((n, x, y) => {
+                var picked = this.pick(x, y, Gtk.PickFlags.DEFAULT);
+                for (var w = picked; w != null; w = w.get_parent()) {
+                    if (w == card) return;
+                }
+                close_overlay();
+            });
             ((Widget)this).add_controller(bg_click);
+
+            // Dropping an app onto the dim area (outside the card) takes it out
+            // of the folder. The overlay is fullscreen, so there is no other
+            // reachable drop target to drag an app out to (#51).
+            var bg_drop = new DropTarget(typeof(string), Gdk.DragAction.MOVE);
+            bg_drop.drop.connect((val, x, y) => {
+                string? aid = val.get_string();
+                if (aid == null || aid.has_prefix("folder:")) return false;
+                app_system.remove_app_from_folder(folder_id, aid);
+                populate();
+                return true;
+            });
+            ((Widget)this).add_controller(bg_drop);
 
             root_box = new Box(Orientation.VERTICAL, 0);
             root_box.halign = Align.CENTER;
@@ -46,12 +68,8 @@ namespace Singularity {
             set_child(root_box);
 
             // Card
-            var card = new Box(Orientation.VERTICAL, 16);
+            card = new Box(Orientation.VERTICAL, 16);
             card.add_css_class("folder-overlay-card");
-            // Stop click propagation on the card so bg_click doesn't fire
-            var card_click = new GestureClick();
-            card_click.pressed.connect((n, x, y) => card_click.set_state(EventSequenceState.CLAIMED));
-            card.add_controller(card_click);
             root_box.append(card);
 
             // Folder name (editable)
@@ -170,11 +188,11 @@ namespace Singularity {
 
             btn.set_child(box);
             btn.clicked.connect(() => {
-                // Dismiss the folder and the overview first, then launch, so the
-                // launched window is not left hidden behind a folder/overview
-                // that failed to close (issue #51).
+                // Close the overview, then close this folder synchronously (the
+                // animated close stalls once the launched app takes focus and
+                // the overlay stops getting frames), then launch (#51).
                 if (on_app_launched != null) on_app_launched();
-                close_overlay();
+                force_close();
                 AppSystem.launch_app(app);
             });
 
@@ -193,7 +211,7 @@ namespace Singularity {
                 });
                 menu.add_item("Open", "system-run-symbolic", () => {
                     if (on_app_launched != null) on_app_launched();
-                    close_overlay();
+                    force_close();
                     AppSystem.launch_app(app);
                 });
                 menu.popup();
@@ -248,6 +266,23 @@ namespace Singularity {
             );
             anim.tick.connect(() => { opacity = anim.value; });
             anim.play();
+        }
+
+        // Tear down immediately, without the fade animation. Used when an app
+        // is launched: the animated close depends on frame-clock ticks that
+        // stop once the launched window takes focus, leaving the overlay stuck
+        // on screen (#51).
+        public void force_close() {
+            if (_rename_timer != 0) { GLib.Source.remove(_rename_timer); _rename_timer = 0; }
+            if (_close_timer != 0) { GLib.Source.remove(_close_timer); _close_timer = 0; }
+            commit_rename();
+            if (_folders_signal_id != 0) {
+                app_system.disconnect(_folders_signal_id);
+                _folders_signal_id = 0;
+            }
+            visible = false;
+            closed();
+            destroy();
         }
 
         public void close_overlay() {
