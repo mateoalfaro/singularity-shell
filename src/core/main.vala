@@ -136,6 +136,9 @@ public class SingularityApp : Singularity.ShellApplication, Singularity.Shell.Sh
         apply_cursor_theme();
         settings.changed["cursor-theme"].connect(apply_cursor_theme);
         Singularity.AppSystem.get_default();
+        // Launch the user's autostart entries once the session has settled
+        // (bus, portals); nothing else in the shell did this before (#170).
+        Timeout.add_seconds(1, () => { launch_autostart_apps(); return Source.REMOVE; });
         var cal_manager = Singularity.Calendar.CalendarManager.get_default();
         cal_manager.register_provider(new Singularity.Calendar.LocalProvider());
         Bus.own_name(
@@ -1172,6 +1175,43 @@ window.inactive.shadow.color: %s
             app_switcher.show_and_cycle_prev();
             return false;
         });
+    }
+
+    private bool _autostart_done = false;
+
+    // Launch the .desktop entries in ~/.config/autostart that the Autostart
+    // settings page writes. should_show() honours Hidden, TryExec and
+    // OnlyShowIn/NotShowIn; X-GNOME-Autostart-enabled=false opts an entry out.
+    private void launch_autostart_apps() {
+        if (_autostart_done) return;
+        _autostart_done = true;
+        string dir = GLib.Path.build_filename(
+            GLib.Environment.get_user_config_dir(), "autostart");
+        GLib.Dir d;
+        try {
+            d = GLib.Dir.open(dir, 0);
+        } catch (GLib.Error e) {
+            return;
+        }
+        string? name;
+        while ((name = d.read_name()) != null) {
+            if (!name.has_suffix(".desktop")) continue;
+            string path = GLib.Path.build_filename(dir, name);
+            var info = new GLib.DesktopAppInfo.from_filename(path);
+            if (info == null || !info.should_show()) continue;
+            var kf = new GLib.KeyFile();
+            try {
+                kf.load_from_file(path, GLib.KeyFileFlags.NONE);
+                if (kf.has_key("Desktop Entry", "X-GNOME-Autostart-enabled")
+                        && !kf.get_boolean("Desktop Entry", "X-GNOME-Autostart-enabled"))
+                    continue;
+            } catch (GLib.Error e) {}
+            try {
+                info.launch(null, null);
+            } catch (GLib.Error e) {
+                warning("autostart: failed to launch %s: %s", name, e.message);
+            }
+        }
     }
 
     private void apply_cursor_theme() {
