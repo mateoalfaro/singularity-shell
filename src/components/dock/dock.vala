@@ -339,7 +339,11 @@ namespace Singularity {
                 main_container.margin_start = gap;
             } else {
                 _current_margin = gap;
-                set_margin(this, GtkLayerShell.Edge.BOTTOM, gap);
+                // The dock-box casts a 16px bottom shadow that lives in the
+                // container's bottom margin. Pull the surface down by that
+                // much so the shadow is not clipped at the surface edge,
+                // while the dock stays at the same visual gap (#162).
+                set_margin(this, GtkLayerShell.Edge.BOTTOM, int.max(0, gap - 21));
                 main_container.margin_top = gap;
             }
         }
@@ -738,8 +742,13 @@ namespace Singularity {
                 // Returning on-screen needs a fresh buffer; the idle frame clock
                 // won't render one, so an unmap->map cycle at the visible margin
                 // forces it (otherwise the surface comes back blank).
-                _current_margin = gap;
-                set_margin(this, edge, gap);
+                // For the bottom dock, pull the surface down so the dock-box
+                // bottom shadow (16px, reserved in the container margin) is not
+                // clipped at the surface edge, keeping the dock near the edge.
+                int rest_margin = (edge == GtkLayerShell.Edge.BOTTOM)
+                    ? int.max(0, gap - 21) : gap;
+                _current_margin = rest_margin;
+                set_margin(this, edge, rest_margin);
                 // Slide the content up from below: offset it down (no transition,
                 // clipped out of the surface), remap, then drop the offset so the
                 // CSS transform transition animates it into view. The frame clock
@@ -1548,7 +1557,19 @@ namespace Singularity {
             return false;
         }
 
-        private void load_app_icon(Gtk.Image img, string app_id, GLib.AppInfo? app_info) {
+        // First running window matching app_id, so the dock can reuse the icon
+        // and title already resolved on the Window object (the same data the
+        // alt-tab switcher uses), instead of resolving only from the desktop
+        // entry and missing it for apps like Minecraft or Bitwig (#159, #161).
+        private AppSystem.Window? find_window_for(string app_id) {
+            foreach (var win in app_system.get_windows()) {
+                if (win.app_id == app_id || dock_matches(app_id, win.app_id)) return win;
+            }
+            return null;
+        }
+
+        private void load_app_icon(Gtk.Image img, string app_id, GLib.AppInfo? app_info,
+                                   AppSystem.Window? win = null) {
             var theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default());
             if (app_info != null) {
                 var icon = app_info.get_icon();
@@ -1562,6 +1583,25 @@ namespace Singularity {
             }
             string lower = strip_desktop(app_id);
             if (theme.has_icon(lower)) { img.icon_name = lower; return; }
+            // Running window: reuse the icon the switcher already resolved,
+            // including the window's own gicon and its title for the XWayland
+            // _NET_WM_ICON lookup, before falling back to the generic gear.
+            if (win != null) {
+                if (win.gicon != null) { img.set_from_gicon(win.gicon); return; }
+                string[] cands = {};
+                if (win.icon_name != null && win.icon_name != "") cands += win.icon_name;
+                if (win.app_id != null && win.app_id != "") {
+                    cands += win.app_id;
+                    cands += win.app_id.down();
+                    int dot = win.app_id.last_index_of(".");
+                    if (dot >= 0 && dot + 1 < win.app_id.length)
+                        cands += win.app_id.substring(dot + 1).down();
+                }
+                foreach (string c in cands)
+                    if (theme.has_icon(c)) { img.icon_name = c; return; }
+                var wtex = Singularity.xwayland_icon(win.app_id, win.title);
+                if (wtex != null) { img.set_from_paintable(wtex); return; }
+            }
             // XWayland apps (games, Wine, Discord) carry their icon in
             // _NET_WM_ICON; use it before the generic placeholder (#93).
             var tex = Singularity.xwayland_icon(app_id, null);
@@ -1771,7 +1811,10 @@ namespace Singularity {
 
         private Gtk.Box create_dock_item(string app_id, GLib.AppInfo? app_info, int win_count, bool is_pinned_app, int icon_size) {
             bool is_running = win_count > 0;
-            string display_name = app_info != null ? app_info.get_display_name() : app_id;
+            AppSystem.Window? rep_win = is_running ? find_window_for(app_id) : null;
+            string display_name = app_info != null
+                ? app_info.get_display_name()
+                : (rep_win != null && rep_win.title != null && rep_win.title != "" ? rep_win.title : app_id);
 
             // Pill axis follows the dock axis: horizontal on bottom dock
             // (icon | suffix), vertical on left/right dock (icon stacked
@@ -1799,7 +1842,7 @@ namespace Singularity {
             img.pixel_size = icon_size;
             img.halign = Align.CENTER;
             img.valign = Align.CENTER;
-            load_app_icon(img, app_id, app_info);
+            load_app_icon(img, app_id, app_info, rep_win);
             btn.set_child(img);
 
             var item_overlay = new Overlay();
