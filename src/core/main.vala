@@ -1242,6 +1242,22 @@ window.inactive.shadow.color: %s
         } catch (GLib.Error e) {
             warning("cursor theme: failed to update labwc environment: %s", e.message);
         }
+
+        // XWayland apps that use libXcursor directly (Qt, Java, games, Wine)
+        // read Xcursor.theme/Xcursor.size from the X resource database, not
+        // XSETTINGS, so without this they fall back to the default cursor
+        // (#154). Merge them into RESOURCE_MANAGER for newly spawned X apps.
+        if (GLib.Environment.get_variable("DISPLAY") != null) {
+            try {
+                var xrdb = new GLib.Subprocess(GLib.SubprocessFlags.STDIN_PIPE
+                    | GLib.SubprocessFlags.STDERR_SILENCE, "xrdb", "-merge");
+                xrdb.communicate_utf8_async(
+                    "Xcursor.theme: %s\nXcursor.size: %d\n".printf(theme, cursor_size),
+                    null, null);
+            } catch (GLib.Error e) {
+                warning("cursor theme: failed to merge Xcursor resources: %s", e.message);
+            }
+        }
     }
 
     private void apply_icon_theme() {
