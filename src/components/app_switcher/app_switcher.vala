@@ -180,8 +180,8 @@ namespace Singularity {
             scroll.vscrollbar_policy = PolicyType.NEVER;
             scroll.propagate_natural_width = false;
             scroll.propagate_natural_height = false;
-            scroll.min_content_height = 120;
-            scroll.min_content_width = 320;
+            scroll.min_content_height = 0;
+            scroll.min_content_width = 0;
             scroll.max_content_height = 500;
             scroll.max_content_width = 900;
 
@@ -279,9 +279,9 @@ namespace Singularity {
         private void update_viewport_size() {
             int count = (int)windows.length();
             if (_list_mode) {
-                scroll.set_size_request(360, int.min(500, int.max(120, count * 48 + 16)));
+                scroll.set_size_request(360, int.min(500, count * 48 + 16));
             } else {
-                scroll.set_size_request(int.min(900, int.max(320, count * 332 + 16)), 260);
+                scroll.set_size_request(int.min(900, count * 332 + 16), 260);
             }
         }
 

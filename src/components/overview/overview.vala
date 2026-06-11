@@ -374,7 +374,16 @@ namespace Singularity {
                 }
                 if (grid_mon != null) {
                     Gdk.Rectangle gg = grid_mon.get_geometry();
-                    launcher_grid.set_columns_for_width(gg.width - 48);
+                    int avail = gg.width - 48;
+                    var dsettings = new GLib.Settings("dev.sinty.desktop");
+                    string dock_pos = dsettings.get_string("dock-position");
+                    if ((dock_pos == "left" || dock_pos == "right")
+                            && !dsettings.get_boolean("dock-autohide")) {
+                        int isz = dsettings.get_int("dock-icon-size");
+                        if (isz <= 0) isz = 48;
+                        avail -= isz + dsettings.get_int("dock-gap") + 28;
+                    }
+                    launcher_grid.set_columns_for_width(avail);
                 }
 
                 // Start invisible, present (map surface), then animate in.

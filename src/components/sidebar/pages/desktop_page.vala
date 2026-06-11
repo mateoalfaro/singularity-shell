@@ -39,6 +39,7 @@ namespace Singularity {
         // Inline custom color picker state (class fields - never capture mutable locals)
         private ExpanderRow? custom_picker_row = null;
         private FlowBox? accent_colors_box = null;
+        private DrawingArea? wallpaper_swatch = null;
         private DrawingArea? picker_sv_area = null;
         private DrawingArea? picker_hue_bar = null;
         private Entry? picker_hex_entry = null;
@@ -385,6 +386,7 @@ namespace Singularity {
                     }
                 });
                 if (color == "wallpaper") {
+                    wallpaper_swatch = da;
                     var overlay = new Overlay();
                     overlay.set_child(da);
                     var icon = new Image.from_icon_name("preferences-desktop-wallpaper-symbolic");
@@ -781,6 +783,11 @@ namespace Singularity {
                 settings.set_boolean("show-battery-percentage", battery_pct_row.switch_btn.active);
             });
             panel_group.add_row(battery_pct_row);
+            var pm = Singularity.SystemMonitor.get_default().power;
+            battery_pct_row.visible = pm.is_present;
+            pm.notify["is-present"].connect(() => {
+                battery_pct_row.visible = pm.is_present;
+            });
 
             var global_menu_row = new SwitchRow(_("Global Menu"), _("Show app menus in the top panel; off shows each app's own menu bar (requires login again)"), settings.get_boolean("global-menu-enabled"));
             global_menu_row.switch_btn.notify["active"].connect(() => {
@@ -847,7 +854,7 @@ namespace Singularity {
             count_row.spin_btn.value_changed.connect(() => {
                 settings.set_int("workspace-count", (int)count_row.spin_btn.value);
             });
-            settings.bind("dynamic-workspaces", count_row.spin_btn, "sensitive", SettingsBindFlags.INVERT_BOOLEAN);
+            settings.bind("dynamic-workspaces", count_row, "visible", SettingsBindFlags.INVERT_BOOLEAN);
             ws_group.add_row(count_row);
             add_group(ws_group);
             var dock_group = new PreferencesGroup(_("Dock"));
@@ -871,13 +878,13 @@ namespace Singularity {
 
             settings.changed["dock-visibility-mode"].connect(() => {
                 bool always = settings.get_string("dock-visibility-mode") == "always";
-                autohide_row.sensitive = always;
-                intelli_row.sensitive = always;
+                autohide_row.visible = always;
+                intelli_row.visible = always;
             });
             {
                 bool always = settings.get_string("dock-visibility-mode") == "always";
-                autohide_row.sensitive = always;
-                intelli_row.sensitive = always;
+                autohide_row.visible = always;
+                intelli_row.visible = always;
             }
 
             string current_pos = settings.get_string("dock-position");
@@ -902,6 +909,10 @@ namespace Singularity {
                 settings.set_boolean("dock-extended-mode", extended_row.switch_btn.active);
             });
             adv_dock_group.add_row(extended_row);
+            extended_row.visible = settings.get_string("dock-style") == "panel";
+            settings.changed["dock-style"].connect(() => {
+                extended_row.visible = settings.get_string("dock-style") == "panel";
+            });
             string current_align = settings.get_string("dock-alignment");
             string align_label = "Center";
             if (current_align == "start") align_label = "Start";
@@ -936,6 +947,32 @@ namespace Singularity {
             });
             adv_dock_group.add_row(flat_panel_row);
 
+            var opacity_row = new PreferencesRow();
+            var opacity_box = new Box(Orientation.VERTICAL, 8);
+            opacity_box.margin_top = 12;
+            opacity_box.margin_bottom = 12;
+            opacity_box.margin_start = 12;
+            opacity_box.margin_end = 12;
+            var opacity_lbl = new Label(_("Flat Panel Opacity"));
+            opacity_lbl.add_css_class("title");
+            opacity_lbl.halign = Align.START;
+            opacity_box.append(opacity_lbl);
+            var opacity_scale = new Scale.with_range(Orientation.HORIZONTAL, 0, 100, 1);
+            opacity_scale.draw_value = true;
+            opacity_scale.value_pos = PositionType.RIGHT;
+            opacity_scale.hexpand = true;
+            opacity_scale.set_value(settings.get_int("panel-flat-opacity"));
+            opacity_scale.value_changed.connect(() => {
+                settings.set_int("panel-flat-opacity", (int)opacity_scale.get_value());
+            });
+            opacity_box.append(opacity_scale);
+            opacity_row.set_child(opacity_box);
+            opacity_row.visible = settings.get_boolean("panel-flat");
+            adv_dock_group.add_row(opacity_row);
+            settings.changed["panel-flat"].connect(() => {
+                opacity_row.visible = settings.get_boolean("panel-flat");
+            });
+
             var dock_multi_row = new SwitchRow(_("Dock on All Monitors"), _("Show dock on every connected screen"), settings.get_boolean("dock-multi-monitor"));
             dock_multi_row.switch_btn.notify["active"].connect(() => {
                 settings.set_boolean("dock-multi-monitor", dock_multi_row.switch_btn.active);
@@ -947,6 +984,18 @@ namespace Singularity {
                 settings.set_boolean("panel-multi-monitor", panel_multi_row.switch_btn.active);
             });
             adv_dock_group.add_row(panel_multi_row);
+            var _disp = Gdk.Display.get_default();
+            if (_disp != null) {
+                var _mons = _disp.get_monitors();
+                bool multi = _mons.get_n_items() > 1;
+                dock_multi_row.visible = multi;
+                panel_multi_row.visible = multi;
+                _mons.items_changed.connect(() => {
+                    bool m = _mons.get_n_items() > 1;
+                    dock_multi_row.visible = m;
+                    panel_multi_row.visible = m;
+                });
+            }
             var gap_row = new PreferencesRow();
             var gap_box = new Box(Orientation.VERTICAL, 8);
             gap_box.margin_top = 12;
@@ -1491,6 +1540,7 @@ namespace Singularity {
                 GLib.Idle.add(() => {
                     if (gen == wallpaper_accent_generation) {
                         cached_wallpaper_accent = hex;
+                        if (wallpaper_swatch != null) wallpaper_swatch.queue_draw();
                         queue_draw();
                     }
                     return GLib.Source.REMOVE;

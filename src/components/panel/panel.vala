@@ -333,6 +333,10 @@ namespace Singularity {
             _settings.changed["panel-flat"].connect(() => {
                 update_flat_mode();
             });
+            _settings.changed["panel-flat-opacity"].connect(() => {
+                apply_flat_opacity(_settings);
+            });
+            apply_flat_opacity(_settings);
             _settings.changed["background-picture-uri"].connect(() => {
                 _last_strip_lum = -1.0;
                 update_topbar_fg_class();
@@ -363,11 +367,10 @@ namespace Singularity {
             /* Request compositor-level background blur (frosted glass) */
         }
 
-        // A window is fullscreen on THIS panel's monitor. The global
-        // focused-fullscreen check hid every monitor's panel when a video went
-        // fullscreen on a single monitor (#99/#100).
         private bool is_any_window_fullscreen_on_my_monitor() {
             var app_sys = AppSystem.get_default();
+            void* fh = app_sys.get_focused_window_handle();
+            if (fh == null) return false;
             var display = Gdk.Display.get_default();
             var monitor = this.gdk_monitor ?? find_shell_monitor();
             if (monitor == null && display != null && display.get_monitors().get_n_items() > 0)
@@ -379,12 +382,14 @@ namespace Singularity {
             bool target_is_primary = (primary != null && monitor != null)
                 && (primary == monitor || (target_conn != null && primary.get_connector() == target_conn));
             foreach (var win in app_sys.get_windows()) {
-                if (!win.is_fullscreen || win.is_minimized) continue;
+                if (win.handle != fh) continue;
+                if (!win.is_fullscreen || win.is_minimized) return false;
                 if (single || monitor == null) return true;
                 var wmon = Singularity.wayland_get_window_monitor(win.handle);
-                if (wmon == null) { if (target_is_primary) return true; continue; }
+                if (wmon == null) return target_is_primary;
                 if (wmon == monitor) return true;
                 if (target_conn != null && wmon.get_connector() == target_conn) return true;
+                return false;
             }
             return false;
         }
@@ -419,13 +424,49 @@ namespace Singularity {
             });
         }
 
+        private bool has_fullscreen_on_my_monitor() {
+            var app_sys = AppSystem.get_default();
+            var display = Gdk.Display.get_default();
+            var monitor = this.gdk_monitor ?? find_shell_monitor();
+            if (monitor == null && display != null && display.get_monitors().get_n_items() > 0)
+                monitor = display.get_monitors().get_item(0) as Gdk.Monitor;
+            bool single = (display == null) || (display.get_monitors().get_n_items() <= 1);
+            string? target_conn = (monitor != null) ? monitor.get_connector() : null;
+            Gdk.Monitor? primary = (display != null)
+                ? display.get_monitors().get_item(0) as Gdk.Monitor : null;
+            bool target_is_primary = (primary != null && monitor != null)
+                && (primary == monitor || (target_conn != null && primary.get_connector() == target_conn));
+            foreach (var win in app_sys.get_windows()) {
+                if (!win.is_fullscreen || win.is_minimized) continue;
+                if (single || monitor == null) return true;
+                var wmon = Singularity.wayland_get_window_monitor(win.handle);
+                if (wmon == null) { if (target_is_primary) return true; continue; }
+                if (wmon == monitor) return true;
+                if (target_conn != null && wmon.get_connector() == target_conn) return true;
+            }
+            return false;
+        }
+
+        private static Gtk.CssProvider? _flat_provider = null;
+        private static void apply_flat_opacity(GLib.Settings s) {
+            var disp = Gdk.Display.get_default();
+            if (disp == null) return;
+            if (_flat_provider == null) {
+                _flat_provider = new Gtk.CssProvider();
+                Gtk.StyleContext.add_provider_for_display(disp, _flat_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER);
+            }
+            int op = s.get_int("panel-flat-opacity").clamp(0, 100);
+            string a = (op >= 100) ? "1" : "0.%02d".printf(op);
+            _flat_provider.load_from_string(".panel-window.flat-panel .panel { background-color: rgba(0,0,0,%s); }".printf(a));
+        }
+
         private void update_flat_mode() {
             bool flat_setting = _settings.get_boolean("panel-flat");
-            // Flatten only for a maximized window on THIS panel's monitor.
-            // If we don't know our monitor, fall back to the global check.
             bool force_flat = (gdk_monitor != null)
-                ? AppSystem.get_default().has_maximized_window_on_monitor(gdk_monitor)
-                : AppSystem.get_default().has_any_maximized_window();
+                ? (AppSystem.get_default().has_maximized_window_on_monitor(gdk_monitor)
+                   || has_fullscreen_on_my_monitor())
+                : (AppSystem.get_default().has_any_maximized_window()
+                   || AppSystem.get_default().has_any_fullscreen_window());
             if (flat_setting || force_flat) {
                 add_css_class("flat-panel");
             } else {
