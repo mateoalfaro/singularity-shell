@@ -34,6 +34,26 @@ namespace Singularity {
         public abstract async void pair () throws Error;
         public abstract async void cancel_pairing () throws Error;
     }
+    [DBus (name = "org.bluez.AgentManager1")]
+    public interface AgentManager1 : Object {
+        public abstract async void register_agent (ObjectPath agent, string capability) throws Error;
+        public abstract async void request_default_agent (ObjectPath agent) throws Error;
+        public abstract async void unregister_agent (ObjectPath agent) throws Error;
+    }
+
+    [DBus (name = "org.bluez.Agent1")]
+    public class BluetoothAgent : Object {
+        public void release () throws Error { }
+        public string request_pin_code (ObjectPath device) throws Error { return "0000"; }
+        public uint32 request_passkey (ObjectPath device) throws Error { return 0; }
+        public void display_pin_code (ObjectPath device, string pincode) throws Error { }
+        public void display_passkey (ObjectPath device, uint32 passkey, uint16 entered) throws Error { }
+        public void request_confirmation (ObjectPath device, uint32 passkey) throws Error { }
+        public void request_authorization (ObjectPath device) throws Error { }
+        public void authorize_service (ObjectPath device, string uuid) throws Error { }
+        public void cancel () throws Error { }
+    }
+
     public class BluetoothManager : Object {
         public struct DeviceInfo {
             public string path;
@@ -46,6 +66,8 @@ namespace Singularity {
         }
         private ObjectManager? object_manager;
         private Adapter1? adapter;
+        private BluetoothAgent? agent;
+        private uint agent_id = 0;
         private string adapter_path;
         public bool is_available { get; private set; default = false; }
         public bool is_powered { get; private set; default = false; }
@@ -68,6 +90,7 @@ namespace Singularity {
                     message("BluetoothManager: Connected to org.bluez ObjectManager");
                     object_manager.interfaces_added.connect(on_interfaces_added);
                     object_manager.interfaces_removed.connect(on_interfaces_removed);
+                    register_agent_flow.begin();
                     var objects = object_manager.get_managed_objects();
                     objects.foreach((path, interfaces) => {
                         if (interfaces.contains("org.bluez.Adapter1")) {
@@ -189,6 +212,19 @@ namespace Singularity {
             }
         }
 
+        private async void register_agent_flow() {
+            try {
+                var conn = yield Bus.get(BusType.SYSTEM);
+                agent = new BluetoothAgent();
+                agent_id = conn.register_object("/dev/sinty/btagent", agent);
+                AgentManager1 am = yield Bus.get_proxy(BusType.SYSTEM, "org.bluez", "/org/bluez");
+                yield am.register_agent(new ObjectPath("/dev/sinty/btagent"), "NoInputNoOutput");
+                yield am.request_default_agent(new ObjectPath("/dev/sinty/btagent"));
+            } catch (Error e) {
+                warning("Bluetooth agent registration failed: %s", e.message);
+            }
+        }
+
         public async void set_power(bool power) {
             if (adapter != null) {
                 adapter.powered = power;
@@ -219,6 +255,10 @@ namespace Singularity {
             try {
                 var device = yield Bus.get_proxy<Device1>(BusType.SYSTEM, "org.bluez", path);
                 if (device != null) {
+                    if (!device.paired) {
+                        yield device.pair();
+                    }
+                    device.trusted = true;
                     yield device.connect();
                 }
             } catch (Error e) {

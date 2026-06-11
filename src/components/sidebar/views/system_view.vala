@@ -116,6 +116,7 @@ namespace Singularity {
                         // Bluetooth Tile
                         var bluetooth = SystemMonitor.get_default().bluetooth;
                         var bt_tile = new QuickSettingTile("Bluetooth", "bluetooth-active-symbolic", bluetooth.is_powered);
+                        bt_tile.auto_toggle = false;
                         SystemView.update_bt_tile(bt_tile, bluetooth);
                         bluetooth.state_changed.connect(() => {
                             bt_tile.active = bluetooth.is_powered;
