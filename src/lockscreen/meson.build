@@ -1,18 +1,26 @@
-lockscreen_sources = [
-  'lock_screen.vala',
-  'lock_surface.c',
-  'lock_surface.vapi',
-  'pam_auth.c',
-]
-
+# A toolkit-less ext-session-lock-v1 locker (swaylock-style): renders with
+# Cairo, reads the keyboard with xkbcommon, authenticates with PAM. The old
+# GTK layer-shell approach conflicted with the lock-surface role and left the
+# screen black (#35), so it is replaced here.
 pam_dep = cc.find_library('pam', required: true)
+lock_wl_dep         = dependency('wayland-client')
+lock_xkb_dep        = dependency('xkbcommon')
+lock_cairo_dep      = dependency('cairo')
+lock_pangocairo_dep = dependency('pangocairo')
+lock_pixbuf_dep     = dependency('gdk-pixbuf-2.0')
+lock_gio_dep        = dependency('gio-2.0')
 
-executable('singularity-lockscreen', lockscreen_sources,
+executable('singularity-lockscreen',
+  ['lock_main.c', 'pam_auth.c'],
   sources: [sl_proto_c, sl_proto_h],
-  dependencies: dependencies + [
-    libsingularity_dep,
-    gee_dep,
-    pam_dep
+  dependencies: [
+    lock_wl_dep,
+    lock_xkb_dep,
+    lock_cairo_dep,
+    lock_pangocairo_dep,
+    lock_pixbuf_dep,
+    lock_gio_dep,
+    pam_dep,
   ],
   include_directories: [
     include_directories('.'),
