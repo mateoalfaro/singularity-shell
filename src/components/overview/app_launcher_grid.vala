@@ -147,7 +147,9 @@ namespace Singularity {
                 clear_drop_indicator();
                 string? item = val.get_string();
                 if (item == null) return false;
-                commit_drop(item, x, y);
+                string it = item;
+                double dx = x, dy = y;
+                GLib.Idle.add(() => { commit_drop(it, dx, dy); return GLib.Source.REMOVE; });
                 return true;
             });
             grid.add_controller(drop);
@@ -503,7 +505,9 @@ namespace Singularity {
             drop.drop.connect((val, x, y) => {
                 string? dragged = val.get_string();
                 if (dragged == null || dragged == self_key) return false;
-                reorder_relative_to(dragged, self_key);
+                string d = dragged;
+                string a = self_key;
+                GLib.Idle.add(() => { reorder_relative_to(d, a); return GLib.Source.REMOVE; });
                 return true;
             });
             overlay.add_controller(drop);
@@ -749,22 +753,28 @@ namespace Singularity {
             return best;
         }
 
-        // Insert `item` immediately before `anchor_key` in the grid order.
+        // Move `item` next to `anchor_key`. Dragging forward (item currently
+        // before the anchor) drops it after the anchor; dragging backward drops
+        // it before, which matches what the cursor position implies.
         private void reorder_relative_to(string item, string anchor_key) {
             var current = app_system.get_ordered_grid_items();
-            string[] without = {};
-            foreach (var o in current) if (o != item) without += o;
+            int from = -1, to = -1;
+            for (int i = 0; i < current.length; i++) {
+                if (current[i] == item) from = i;
+                if (current[i] == anchor_key) to = i;
+            }
+            bool after = (from >= 0 && to >= 0 && from < to);
             string[] final_order = {};
             bool inserted = false;
-            foreach (var o in without) {
-                if (!inserted && o == anchor_key) {
-                    final_order += item;
-                    inserted = true;
-                }
+            foreach (var o in current) {
+                if (o == item) continue;
+                if (!after && o == anchor_key) { final_order += item; inserted = true; }
                 final_order += o;
+                if (after && o == anchor_key) { final_order += item; inserted = true; }
             }
             if (!inserted) final_order += item;
-            app_system.set_grid_order(final_order);
+            app_system.set_grid_order_quiet(final_order);
+            relayout();
         }
 
         private Widget build_widget_placeholder(string iid,
@@ -981,22 +991,16 @@ namespace Singularity {
                 }
                 c = c.get_next_sibling();
             }
-            // Insert relative to whatever item was under the cursor at drop.
-            var current = app_system.get_ordered_grid_items();
-            string[] without = {};
-            foreach (var o in current) if (o != item) without += o;
-            int insert_at = without.length;
             if (target_key != null && target_key != item) {
-                for (int i = 0; i < without.length; i++)
-                    if (without[i] == target_key) { insert_at = i; break; }
+                reorder_relative_to(item, target_key);
+                return;
             }
+            var current = app_system.get_ordered_grid_items();
             string[] final_order = {};
-            for (int i = 0; i < without.length; i++) {
-                if (i == insert_at) final_order += item;
-                final_order += without[i];
-            }
-            if (final_order.length == without.length) final_order += item;
-            app_system.set_grid_order(final_order);
+            foreach (var o in current) if (o != item) final_order += o;
+            final_order += item;
+            app_system.set_grid_order_quiet(final_order);
+            relayout();
         }
 
         // Inverse lookup: read the data attached when we attached the child.

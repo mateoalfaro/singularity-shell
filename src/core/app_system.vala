@@ -1574,6 +1574,10 @@ namespace Singularity {
             _setting_grid_order = false;
         }
 
+        public void set_grid_order_quiet(string[] order) {
+            settings.set_strv("app-grid-order", order);
+        }
+
         // Returns ordered list of (app_id or "folder:folder_id"), filling in
         // any apps not yet in the saved order at the end.
 
