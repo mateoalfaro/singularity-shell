@@ -68,12 +68,13 @@ namespace Singularity.SidebarPages {
                 return;
             }
             foreach (var device in manager.devices) {
+                string dev_path = device.path;
                 var row = new Box(Orientation.HORIZONTAL, 12);
                 row.margin_top = 8;
                 row.margin_bottom = 8;
                 row.margin_start = 12;
                 row.margin_end = 12;
-                var icon = new Image.from_icon_name(device.icon);
+                var icon = new Image.from_icon_name(BluetoothManager.bt_icon_for(device.icon));
                 icon.pixel_size = 24;
                 row.append(icon);
                 var lbl = new Label(device.name);
@@ -90,28 +91,35 @@ namespace Singularity.SidebarPages {
                     status.add_css_class("dim-label");
                     row.append(status);
                 }
-                var btn = new Button();
-                btn.add_css_class("flat");
-                if (device.connected) {
-                    btn.icon_name = "network-offline-symbolic";
-                    btn.tooltip_text = _("Disconnect");
-                    btn.clicked.connect(() => {
-                        manager.disconnect_device.begin(device.path);
-                    });
+                if (manager.connecting_path == dev_path) {
+                    var spinner = new Spinner();
+                    spinner.spinning = true;
+                    spinner.tooltip_text = _("Connecting…");
+                    row.append(spinner);
                 } else {
-                    btn.icon_name = "network-transmit-receive-symbolic";
-                    btn.tooltip_text = _("Connect");
-                    btn.clicked.connect(() => {
-                        manager.connect_device.begin(device.path);
-                    });
+                    var btn = new Button();
+                    btn.add_css_class("flat");
+                    if (device.connected) {
+                        btn.icon_name = "network-offline-symbolic";
+                        btn.tooltip_text = _("Disconnect");
+                        btn.clicked.connect(() => {
+                            manager.disconnect_device.begin(dev_path);
+                        });
+                    } else {
+                        btn.icon_name = "network-transmit-receive-symbolic";
+                        btn.tooltip_text = _("Connect");
+                        btn.clicked.connect(() => {
+                            manager.connect_device.begin(dev_path);
+                        });
+                    }
+                    row.append(btn);
                 }
-                row.append(btn);
                 if (device.paired) {
                     var forget_btn = new Button.from_icon_name("user-trash-symbolic");
                     forget_btn.add_css_class("flat");
                     forget_btn.tooltip_text = _("Forget Device");
                     forget_btn.clicked.connect(() => {
-                        manager.remove_device.begin(device.path);
+                        manager.remove_device.begin(dev_path);
                     });
                     row.append(forget_btn);
                 }

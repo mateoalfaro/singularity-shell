@@ -125,6 +125,12 @@ namespace Singularity {
                         bluetooth.device_changed.connect((path) => {
                             SystemView.update_bt_tile(bt_tile, bluetooth);
                         });
+                        bluetooth.device_added.connect((d) => {
+                            SystemView.update_bt_tile(bt_tile, bluetooth);
+                        });
+                        bluetooth.device_removed.connect((p) => {
+                            SystemView.update_bt_tile(bt_tile, bluetooth);
+                        });
                         bt_tile.clicked.connect(() => {
                             bluetooth.set_power.begin(!bt_tile.active);
                         });
@@ -627,8 +633,7 @@ namespace Singularity {
             }
             if (connected_dev != null) {
                 tile.subtitle = connected_dev.name;
-                string dev_icon = connected_dev.icon;
-                tile.icon_name = (dev_icon != null && dev_icon != "") ? dev_icon : "bluetooth-active-symbolic";
+                tile.icon_name = BluetoothManager.bt_icon_for(connected_dev.icon);
             } else {
                 tile.subtitle = bluetooth.is_powered ? _("On") : _("Off");
                 tile.icon_name = "bluetooth-active-symbolic";

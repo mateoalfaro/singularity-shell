@@ -225,6 +225,34 @@ namespace Singularity {
             sys_pill.append(battery_icon);
             sys_pill.append(battery_label);
 
+            var bt = SystemMonitor.get_default().bluetooth;
+            var call_mon = SystemMonitor.get_default().call_monitor;
+            var bt_icon = new Image.from_icon_name("bluetooth-active-symbolic");
+            bt_icon.pixel_size = 16;
+            var bt_indicator = new Box(Orientation.HORIZONTAL, 0);
+            bt_indicator.add_css_class("bt-indicator");
+            bt_indicator.append(bt_icon);
+            bt_indicator.visible = false;
+            void update_bt_indicator() {
+                var dev = bt.get_connected_device();
+                if (dev == null) {
+                    bt_indicator.visible = false;
+                    return;
+                }
+                bt_indicator.visible = true;
+                bt_icon.icon_name = BluetoothManager.bt_icon_for(dev.icon);
+                bt_indicator.tooltip_text = dev.name;
+                if (call_mon.voice_active) bt_indicator.add_css_class("calling");
+                else bt_indicator.remove_css_class("calling");
+            }
+            update_bt_indicator();
+            bt.device_added.connect(() => update_bt_indicator());
+            bt.device_removed.connect(() => update_bt_indicator());
+            bt.device_changed.connect(() => update_bt_indicator());
+            bt.state_changed.connect(() => update_bt_indicator());
+            call_mon.changed.connect(() => update_bt_indicator());
+            sys_pill.append(bt_indicator);
+
             var vpn_indicator = new Image.from_icon_name("network-vpn-symbolic");
             vpn_indicator.pixel_size = 16;
             vpn_indicator.visible = false;

@@ -77,6 +77,7 @@ namespace Singularity {
         public signal void device_added(DeviceInfo device);
         public signal void device_removed(string path);
         public signal void device_changed(string path);
+        public string? connecting_path { get; private set; default = null; }
 
         public BluetoothManager() {
             devices = new List<DeviceInfo?>();
@@ -154,7 +155,6 @@ namespace Singularity {
         }
 
         private void add_device(string path, Variant? properties) {
-            if (properties == null) return;
             create_device_proxy.begin(path);
         }
 
@@ -162,6 +162,9 @@ namespace Singularity {
             try {
                 var device = yield Bus.get_proxy<Device1>(BusType.SYSTEM, "org.bluez", path);
                 if (device != null) {
+                    for (int i = 0; i < devices.length(); i++) {
+                        if (devices.nth_data(i).path == path) return;
+                    }
                     DeviceInfo info = DeviceInfo();
                     info.path = path;
                     info.name = device.name ?? device.alias ?? device.address;
@@ -173,6 +176,7 @@ namespace Singularity {
                     devices.append(info);
                     device_added(info);
                     device.notify.connect((pspec) => {
+                        if (pspec.get_name() == "rssi") return;
                         update_device_info(path, device);
                     });
                 }
@@ -252,6 +256,8 @@ namespace Singularity {
         }
 
         public async void connect_device(string path) {
+            connecting_path = path;
+            device_changed(path);
             try {
                 var device = yield Bus.get_proxy<Device1>(BusType.SYSTEM, "org.bluez", path);
                 if (device != null) {
@@ -263,6 +269,34 @@ namespace Singularity {
                 }
             } catch (Error e) {
                 warning("Connect failed: %s", e.message);
+            }
+            connecting_path = null;
+            device_changed(path);
+        }
+
+        public DeviceInfo? get_connected_device() {
+            for (int i = 0; i < devices.length(); i++) {
+                var d = devices.nth_data(i);
+                if (d.connected) return d;
+            }
+            return null;
+        }
+
+        public static string bt_icon_for(string? bluez_icon) {
+            switch (bluez_icon ?? "") {
+                case "phone":            return "phone-symbolic";
+                case "audio-headset":    return "audio-headset-symbolic";
+                case "audio-headphones": return "audio-headphones-symbolic";
+                case "audio-card":       return "audio-speakers-symbolic";
+                case "input-mouse":      return "input-mouse-symbolic";
+                case "input-keyboard":   return "input-keyboard-symbolic";
+                case "input-gaming":     return "input-gaming-symbolic";
+                case "input-tablet":     return "input-tablet-symbolic";
+                case "camera-photo":
+                case "camera-video":     return "camera-photo-symbolic";
+                case "computer":         return "computer-symbolic";
+                case "printer":          return "printer-symbolic";
+                default:                 return "bluetooth-active-symbolic";
             }
         }
 
