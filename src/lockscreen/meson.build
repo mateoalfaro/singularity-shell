@@ -21,6 +21,7 @@ executable('singularity-lockscreen',
     lock_pixbuf_dep,
     lock_gio_dep,
     pam_dep,
+    loginui_dep,
   ],
   include_directories: [
     include_directories('.'),

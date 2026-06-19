@@ -243,6 +243,9 @@ vk_proto_h = custom_target(
 libsingularity_dep = dependency('singularity-1.0',
   fallback: ['libsingularity', 'libsingularity_dep']
 )
+loginui_dep = dependency('singularity-loginui',
+  fallback: ['singularity-loginui', 'loginui_dep']
+)
 if not meson.is_subproject() and libsingularity_dep.type_name() == 'internal'
   libsingularity_vapi_dir = join_paths(meson.project_build_root(), 'subprojects', 'libsingularity')
   add_project_arguments(['--vapidir=' + libsingularity_vapi_dir], language: 'vala')
