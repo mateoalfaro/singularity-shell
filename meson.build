@@ -12,7 +12,6 @@ add_project_arguments([
 add_project_arguments([
   '--vapidir', join_paths(meson.current_source_dir(), 'src/vapi'),
   '--vapidir', join_paths(meson.current_source_dir(), 'src/wayland'),
-  '--pkg=goa-backend-1.0',
   '--pkg=posix',
   '--pkg=poppler-glib',
   '--pkg=gtksourceview-5',
@@ -39,7 +38,6 @@ shell_deps = [
   dependency('libpulse'),
   dependency('libpulse-mainloop-glib'),
   dependency('goa-1.0'),
-  dependency('goa-backend-1.0'),
   dependency('polkit-gobject-1'),
   dependency('libsoup-3.0'),
   dependency('json-glib-1.0'),

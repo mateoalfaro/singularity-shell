@@ -136,29 +136,11 @@ namespace Singularity.SidebarPages {
         }
 
         private async void perform_provider_login() {
-            connect_btn.sensitive = false;
-            error_label.label = _("Contacting provider...");
-            try {
-                var provider = global::Goa.BackendProvider.get_for_provider_type(selected_provider);
-                if (provider == null) {
-                    error_label.label = _("Provider not supported");
-                    connect_btn.sensitive = true;
-                    return;
-                }
-                var client = yield new global::Goa.Client(null);
-                var object = yield provider.add_account(client, null);
-                if (object != null) {
-                    message("Account added: %s", object.get_object_path());
-                    account_added();
-                    view.navigate_to("accounts");
-                } else {
-                    error_label.label = _("Account creation cancelled");
-                    connect_btn.sensitive = true;
-                }
-            } catch (GLib.Error e) {
-                error_label.label = _("Failed: ") + e.message;
-                connect_btn.sensitive = true;
-            }
+            // FIXME: Replace to avoid depending to libadwaita which for some reason is the case.
+            // Goa.BackendProvider (goa-backend-1.0) pulls in libadwaita + gtk4, so the OAuth
+            // provider flow is disabled here. Nextcloud/ownCloud accounts still work via the
+            // goa-1.0 D-Bus client in perform_nextcloud_login().
+            error_label.label = _("This account type is not available on this system");
         }
 
         private async void perform_nextcloud_login() {
