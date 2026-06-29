@@ -1,6 +1,7 @@
 using GLib;
 using Gtk;
 using Gee;
+using GtkLayerShell;
 
 namespace Singularity {
 
@@ -18,6 +19,8 @@ namespace Singularity {
         private ulong screenshot_handler_id = 0;
         private bool _pending_region = false;
         private bool _pending_window = false;
+        private Gdk.Monitor? _target_monitor = null;
+        private string? _target_connector = null;
         private Gee.HashMap<uint, string> _screenshot_notification_actions = new Gee.HashMap<uint, string>();
 
         public static ScreenshotTool get_default(Gtk.Application? app = null) {
@@ -211,6 +214,26 @@ namespace Singularity {
             }
         }
 
+        public void prepare_for_invocation(void* focused_handle) {
+            this.focused_handle = focused_handle;
+            _target_monitor = null;
+            _target_connector = null;
+
+            if (focused_handle != null) {
+                _target_monitor = Singularity.wayland_get_window_monitor(focused_handle);
+            }
+            if (_target_monitor == null) {
+                _target_monitor = Singularity.Panel.find_primary_monitor();
+            }
+            if (_target_monitor == null) {
+                _target_monitor = first_monitor();
+            }
+            if (_target_monitor != null) {
+                _target_connector = _target_monitor.get_connector();
+                GtkLayerShell.set_monitor(this, _target_monitor);
+            }
+        }
+
         private void on_take_clicked() {
             int delay_secs = current_delay();
 
@@ -323,7 +346,7 @@ namespace Singularity {
             } else if (_pending_window) {
                 _do_window();
             } else {
-                _do_fullscreen();
+                _do_screen();
             }
         }
 
@@ -355,25 +378,14 @@ namespace Singularity {
             ).open_dialog();
         }
 
-        private void _do_fullscreen() {
-            var portal = ScreenshotPortal.get_default();
-            if (screenshot_handler_id != 0) {
-                portal.disconnect(screenshot_handler_id);
-                screenshot_handler_id = 0;
+        private void _do_screen(bool show_failure = true) {
+            var args = target_monitor_capture_args();
+            if (args == null) {
+                warning("[ScreenshotTool] no target monitor for screen capture");
+                if (show_failure) _show_unavailable_dialog();
+                return;
             }
-            screenshot_handler_id = portal.screenshot_taken.connect((uri) => {
-                if (screenshot_handler_id != 0) {
-                    portal.disconnect(screenshot_handler_id);
-                    screenshot_handler_id = 0;
-                }
-                var file = GLib.File.new_for_uri(uri);
-                string? path = file.get_path();
-                if (path != null) portal.copy_to_clipboard(path);
-                portal.save_to_pictures(uri);
-                Singularity.Shell.ScreenFlash.flash();
-                _notify_screenshot("Saved and copied to clipboard", path);
-            });
-            portal.take_screenshot.begin(false);
+            run_local_screenshot(args, "Saved and copied to clipboard", false, show_failure);
         }
 
         private void _do_region() {
@@ -400,70 +412,124 @@ namespace Singularity {
         private void _do_window() {
             void* handle = focused_handle;
             if (handle == null) {
-                _do_fullscreen();
+                _do_screen();
                 return;
             }
-            var app_system = AppSystem.get_default();
-            var win = app_system.get_window_by_handle(handle);
-            if (win == null || win.snap_type == 0) {
-                _do_fullscreen();
+
+            int x, y, w, h, maximized, fullscreen;
+            string? connector;
+            bool got_geometry = Singularity.wayland_get_window_geometry(handle,
+                out x, out y, out w, out h, out maximized, out fullscreen, out connector);
+            if (!got_geometry || w <= 0 || h <= 0) {
+                warning("[ScreenshotTool] no valid focused window geometry, falling back to monitor");
+                _do_screen();
                 return;
             }
-            var monitors = Gdk.Display.get_default().get_monitors();
-            var monitor = monitors.get_item(0) as Gdk.Monitor;
-            if (monitor == null) { _do_fullscreen(); return; }
-            var mon = monitor.get_geometry();
-            int mw = mon.width;
-            int mh = mon.height;
 
-            int panel_h = app_system.shell_panel_height;
-            int dock_h = app_system.shell_dock_height;
-            int uw = mw;
-            int uh = mh - panel_h - dock_h;
-            int ux = 0;
-            int uy = panel_h;
+            string[] args = {};
+            if (_cursor_switch.active) args += "-c";
+            string geometry = "%d,%d %dx%d".printf(x, y, w, h);
+            args += "-g";
+            args += geometry;
+            run_local_screenshot(args, "Window captured and copied to clipboard", true);
+        }
 
-            int x, y, w, h;
-            switch (win.snap_type) {
-                case TilingLayout.SNAP_LEFT:         x=ux;       y=uy;       w=uw/2;  h=uh;   break;
-                case TilingLayout.SNAP_RIGHT:        x=ux+uw/2;  y=uy;       w=uw/2;  h=uh;   break;
-                case TilingLayout.SNAP_TOP_LEFT:     x=ux;       y=uy;       w=uw/2;  h=uh/2; break;
-                case TilingLayout.SNAP_TOP_RIGHT:    x=ux+uw/2;  y=uy;       w=uw/2;  h=uh/2; break;
-                case TilingLayout.SNAP_BOTTOM_LEFT:  x=ux;       y=uy+uh/2;  w=uw/2;  h=uh/2; break;
-                case TilingLayout.SNAP_BOTTOM_RIGHT: x=ux+uw/2;  y=uy+uh/2;  w=uw/2;  h=uh/2; break;
-                default: x=ux; y=uy; w=uw; h=uh; break;
-            }
-
+        private void run_local_screenshot(string[] capture_args, string notification_message,
+                                          bool fallback_to_monitor = false,
+                                          bool show_failure = true) {
             string temp_path;
             try {
                 int fd = GLib.FileUtils.open_tmp("singularity-screenshot-XXXXXX.png", out temp_path);
                 Posix.close(fd);
             } catch (Error e) {
                 warning("[ScreenshotTool] temp file: %s", e.message);
-                _do_fullscreen();
+                if (fallback_to_monitor) {
+                    _do_screen(false);
+                } else if (show_failure) {
+                    _show_unavailable_dialog();
+                }
                 return;
             }
-            string geometry = "%d,%d %dx%d".printf(x, y, w, h);
+
+            string helper = AppSystem.resolve_companion_bin("singularity-screenshot");
+            string[] argv = { helper };
+            foreach (var arg in capture_args) argv += arg;
+            argv += temp_path;
+
             try {
-                string[] argv = {"/usr/bin/grim", "-g", geometry, temp_path};
                 var proc = new GLib.Subprocess.newv(argv,
                     GLib.SubprocessFlags.STDOUT_SILENCE | GLib.SubprocessFlags.STDERR_SILENCE);
-                proc.wait_async.begin(null, (obj, res) => {
-                    try { proc.wait_async.end(res); } catch {}
-                    if (!GLib.FileUtils.test(temp_path, GLib.FileTest.EXISTS)) {
-                        _do_fullscreen();
+                proc.wait_check_async.begin(null, (obj, res) => {
+                    bool ok = false;
+                    try {
+                        ok = proc.wait_check_async.end(res);
+                    } catch (Error e) {
+                        warning("[ScreenshotTool] singularity-screenshot failed: %s", e.message);
+                    }
+                    if (!ok || !file_has_data(temp_path)) {
+                        GLib.FileUtils.unlink(temp_path);
+                        if (fallback_to_monitor) {
+                            _do_screen(false);
+                        } else if (show_failure) {
+                            _show_unavailable_dialog();
+                        }
                         return;
                     }
                     var portal = ScreenshotPortal.get_default();
                     portal.copy_to_clipboard(temp_path);
-                    portal.save_to_pictures("file://" + temp_path);
                     Singularity.Shell.ScreenFlash.flash();
-                    _notify_screenshot("Window captured and copied to clipboard", temp_path);
-                    GLib.Timeout.add(3000, () => { GLib.FileUtils.unlink(temp_path); return false; });
+                    _notify_screenshot(notification_message, temp_path);
+                    GLib.Timeout.add(3000, () => {
+                        GLib.FileUtils.unlink(temp_path);
+                        return GLib.Source.REMOVE;
+                    });
                 });
             } catch (Error e) {
-                warning("[ScreenshotTool] grim spawn failed: %s", e.message);
-                _do_fullscreen();
+                warning("[ScreenshotTool] singularity-screenshot spawn failed: %s", e.message);
+                GLib.FileUtils.unlink(temp_path);
+                if (fallback_to_monitor) {
+                    _do_screen(false);
+                } else if (show_failure) {
+                    _show_unavailable_dialog();
+                }
+            }
+        }
+
+        private string[]? target_monitor_capture_args() {
+            string[] args = {};
+            if (_cursor_switch.active) args += "-c";
+
+            if (_target_connector != null && _target_connector != "") {
+                args += "-o";
+                args += _target_connector;
+                return args;
+            }
+
+            if (_target_monitor != null) {
+                var geo = _target_monitor.get_geometry();
+                args += "-g";
+                args += "%d,%d %dx%d".printf(geo.x, geo.y, geo.width, geo.height);
+                return args;
+            }
+
+            return null;
+        }
+
+        private Gdk.Monitor? first_monitor() {
+            var display = Gdk.Display.get_default();
+            if (display == null) return null;
+            var monitors = display.get_monitors();
+            if (monitors.get_n_items() == 0) return null;
+            return monitors.get_item(0) as Gdk.Monitor;
+        }
+
+        private bool file_has_data(string path) {
+            try {
+                var info = File.new_for_path(path).query_info(
+                    "standard::size", FileQueryInfoFlags.NONE, null);
+                return info.get_size() > 0;
+            } catch (Error e) {
+                return false;
             }
         }
         private void setup_styles() {

@@ -685,7 +685,8 @@ namespace Singularity {
             var app = GLib.Application.get_default() as Gtk.Application;
             var tool = ScreenshotTool.get_default(app);
             if (!tool.ensure_screenshots()) return;
-            tool.focused_handle = AppSystem.get_default().get_focused_window_handle();
+            var handle = AppSystem.get_default().get_focused_window_handle();
+            tool.prepare_for_invocation(handle);
             tool.open_dialog();
         }
 
@@ -707,42 +708,15 @@ namespace Singularity {
         }
 
         private void _screenshot_window(void* handle) {
-            // Use grim with the window's layout geometry for a pixel-perfect, unclipped screenshot.
-            // The snap_type tracked by TilingManager tells us which fraction of the screen this window
-            // occupies; combined with the monitor geometry we compute the exact crop rectangle.
             var app_system = AppSystem.get_default();
-            var win = app_system.get_window_by_handle(handle);
-            if (win == null || win.snap_type == 0) {
-                // Window not yet tiled or snap not recorded - fall back to fullscreen
+            int x, y, w, h, maximized, fullscreen;
+            string? connector;
+            bool got_geometry = Singularity.wayland_get_window_geometry(handle,
+                out x, out y, out w, out h, out maximized, out fullscreen, out connector);
+            if (!got_geometry || w <= 0 || h <= 0) {
+                warning("[Screenshot] no valid focused window geometry, falling back");
                 _screenshot_fullscreen();
                 return;
-            }
-            // Get monitor geometry
-            var monitors = Gdk.Display.get_default().get_monitors();
-            var monitor = monitors.get_item(0) as Gdk.Monitor;
-            if (monitor == null) { _screenshot_fullscreen(); return; }
-            var mon = monitor.get_geometry();
-            int mw = mon.width;
-            int mh = mon.height;
-
-            // Get usable area from AppSystem (updated at runtime by Panel and Dock)
-            int panel_h = app_system.shell_panel_height;
-            int dock_h = app_system.shell_dock_height;
-            int uw = mw;
-            int uh = mh - panel_h - dock_h;
-            int ux = 0;
-            int uy = panel_h;
-
-            // Map snap type to (x, y, w, h) within usable area
-            int x, y, w, h;
-            switch (win.snap_type) {
-                case TilingLayout.SNAP_LEFT:         x=ux;       y=uy;       w=uw/2;  h=uh;   break;
-                case TilingLayout.SNAP_RIGHT:        x=ux+uw/2;  y=uy;       w=uw/2;  h=uh;   break;
-                case TilingLayout.SNAP_TOP_LEFT:     x=ux;       y=uy;       w=uw/2;  h=uh/2; break;
-                case TilingLayout.SNAP_TOP_RIGHT:    x=ux+uw/2;  y=uy;       w=uw/2;  h=uh/2; break;
-                case TilingLayout.SNAP_BOTTOM_LEFT:  x=ux;       y=uy+uh/2;  w=uw/2;  h=uh/2; break;
-                case TilingLayout.SNAP_BOTTOM_RIGHT: x=ux+uw/2;  y=uy+uh/2;  w=uw/2;  h=uh/2; break;
-                default: /* SNAP_MAXIMIZE and unknown */ x=ux; y=uy; w=uw; h=uh; break;
             }
 
             string temp_path;
@@ -754,15 +728,21 @@ namespace Singularity {
                 return;
             }
             string geometry = "%d,%d %dx%d".printf(x, y, w, h);
-            message("[Screenshot] Using grim -g \"%s\", %s", geometry, temp_path);
+            message("[Screenshot] Using singularity-screenshot -g \"%s\", %s", geometry, temp_path);
             try {
-                string[] argv = {"/usr/bin/grim", "-g", geometry, temp_path};
+                string helper = AppSystem.resolve_companion_bin("singularity-screenshot");
+                string[] argv = { helper, "-g", geometry, temp_path };
                 var proc = new GLib.Subprocess.newv(argv,
                     GLib.SubprocessFlags.STDOUT_SILENCE | GLib.SubprocessFlags.STDERR_SILENCE);
-                proc.wait_async.begin(null, (obj, res) => {
-                    try { proc.wait_async.end(res); } catch {}
-                    if (!GLib.FileUtils.test(temp_path, GLib.FileTest.EXISTS)) {
-                        warning("[Screenshot] grim failed, falling back");
+                proc.wait_check_async.begin(null, (obj, res) => {
+                    bool ok = false;
+                    try {
+                        ok = proc.wait_check_async.end(res);
+                    } catch (Error e) {
+                        warning("[Screenshot] singularity-screenshot failed: %s", e.message);
+                    }
+                    if (!ok || !screenshot_file_has_data(temp_path)) {
+                        GLib.FileUtils.unlink(temp_path);
                         _screenshot_fullscreen();
                         return;
                     }
@@ -777,8 +757,19 @@ namespace Singularity {
                     GLib.Timeout.add(3000, () => { GLib.FileUtils.unlink(temp_path); return false; });
                 });
             } catch (Error e) {
-                warning("[Screenshot] grim spawn failed: %s", e.message);
+                warning("[Screenshot] singularity-screenshot spawn failed: %s", e.message);
+                GLib.FileUtils.unlink(temp_path);
                 _screenshot_fullscreen();
+            }
+        }
+
+        private bool screenshot_file_has_data(string path) {
+            try {
+                var info = File.new_for_path(path).query_info(
+                    "standard::size", FileQueryInfoFlags.NONE, null);
+                return info.get_size() > 0;
+            } catch (Error e) {
+                return false;
             }
         }
 
