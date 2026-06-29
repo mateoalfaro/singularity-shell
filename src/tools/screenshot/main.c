@@ -50,15 +50,64 @@ typedef struct {
 typedef struct {
     State    *state;
     uint32_t  format, width, height, stride;
+    uint32_t  bytes_per_pixel;
     uint32_t  flags;
     int       fd;
     void     *data;
     size_t    size;
     struct wl_buffer *buffer;
     int  shm_received;
-    int  bgr_order;  /* 1 if format is XBGR/ABGR (bytes R,G,B,X - no swap needed) */
     int  done;   /* 1=ready, -1=failed, 0=pending */
 } Frame;
+
+static const char *shm_format_name(uint32_t fmt) {
+    switch (fmt) {
+    case WL_SHM_FORMAT_ARGB8888: return "ARGB8888";
+    case WL_SHM_FORMAT_XRGB8888: return "XRGB8888";
+    case WL_SHM_FORMAT_ABGR8888: return "ABGR8888";
+    case WL_SHM_FORMAT_XBGR8888: return "XBGR8888";
+    case WL_SHM_FORMAT_RGB888:   return "RGB888";
+    case WL_SHM_FORMAT_BGR888:   return "BGR888";
+    default: return "unsupported";
+    }
+}
+
+static int shm_format_info(uint32_t fmt, uint32_t *bytes_per_pixel) {
+    switch (fmt) {
+    case WL_SHM_FORMAT_ARGB8888:
+    case WL_SHM_FORMAT_XRGB8888:
+    case WL_SHM_FORMAT_ABGR8888:
+    case WL_SHM_FORMAT_XBGR8888:
+        if (bytes_per_pixel) *bytes_per_pixel = 4;
+        return 1;
+    case WL_SHM_FORMAT_RGB888:
+    case WL_SHM_FORMAT_BGR888:
+        if (bytes_per_pixel) *bytes_per_pixel = 3;
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int shm_format_rank(uint32_t fmt) {
+    switch (fmt) {
+    case WL_SHM_FORMAT_XRGB8888:
+    case WL_SHM_FORMAT_ARGB8888:
+        return 30;
+    case WL_SHM_FORMAT_XBGR8888:
+    case WL_SHM_FORMAT_ABGR8888:
+        return 20;
+    case WL_SHM_FORMAT_BGR888:
+    case WL_SHM_FORMAT_RGB888:
+        return 10;
+    default:
+        return 0;
+    }
+}
+
+static int prefer_shm_format(uint32_t current, uint32_t candidate) {
+    return shm_format_rank(candidate) > shm_format_rank(current);
+}
 
 /* ── SHM buffer ───────────────────────────────────────────────────────────── */
 
@@ -93,17 +142,12 @@ static void frame_ev_buffer(void *data, struct zwlr_screencopy_frame_v1 *obj,
 {
     (void)obj;
     Frame *f = data;
-    /* Accept common 32bpp wl_shm and DRM fourcc formats.
-     * XR24=0x34325258 (XRGB, bytes B,G,R,X), XB24=0x34324258 (XBGR, bytes R,G,B,X),
-     * and their ARGB/ABGR variants. */
-    int is_bgr = (format == 0x34324258 || format == 0x34324241);
-    if (format == WL_SHM_FORMAT_ARGB8888 || format == WL_SHM_FORMAT_XRGB8888 ||
-        format == 0x34325241 || format == 0x34325258 ||
-        format == 0x34324241 || format == 0x34324258) {
+    uint32_t bytes_per_pixel = 0;
+    if (shm_format_info(format, &bytes_per_pixel)) {
         f->format = format;
         f->width = w; f->height = h; f->stride = stride;
+        f->bytes_per_pixel = bytes_per_pixel;
         f->shm_received = 1;
-        f->bgr_order = is_bgr;
     }
 }
 
@@ -169,11 +213,17 @@ static void ext_session_shm_format(void *data,
     struct ext_image_copy_capture_session_v1 *s, uint32_t format)
 {
     (void)s; Frame *f = ((ExtCtx *)data)->f;
-    if (format == WL_SHM_FORMAT_ARGB8888 || format == WL_SHM_FORMAT_XRGB8888)
+    uint32_t bytes_per_pixel = 0;
+    if (!shm_format_info(format, &bytes_per_pixel)) {
+        fprintf(stderr, "ignoring unsupported shm format %s (0x%x)\n",
+            shm_format_name(format), format);
+        return;
+    }
+    if (!f->shm_received || prefer_shm_format(f->format, format)) {
         f->format = format;
-    else if (!f->shm_received)
-        f->format = format;
-    f->shm_received = 1;
+        f->bytes_per_pixel = bytes_per_pixel;
+        f->shm_received = 1;
+    }
 }
 
 static void ext_session_dmabuf_device(void *data,
@@ -240,10 +290,9 @@ static int capture_output_ext(State *state, Output *out, int cursor, Frame *f) {
     while (!ctx.session_done && f->done == 0)
         if (wl_display_dispatch(state->display) < 0) goto out;
 
-    if (f->done == -1 || f->width == 0 || f->height == 0) goto out;
+    if (f->done == -1 || f->width == 0 || f->height == 0 || !f->shm_received) goto out;
 
-    f->stride = f->width * 4;
-    f->bgr_order = (f->format == 0x34324258 || f->format == 0x34324241);
+    f->stride = f->width * f->bytes_per_pixel;
     f->buffer = alloc_shm_buffer(f);
     if (!f->buffer) goto out;
 
@@ -394,12 +443,66 @@ static const struct wl_registry_listener registry_listener = {
 
 /* ── PNG write ────────────────────────────────────────────────────────────── */
 
-/* Write BGRA or RGBA pixel data as PNG.
- * For BGRA (ARGB8888 / XRGB8888 in LE memory), swap B↔R.
- * For RGBA (ABGR8888 / XBGR8888 in LE memory), bytes are already R,G,B,A - no swap.
- * Pass y_invert=1 when the ZWLR_SCREENCOPY_FRAME_V1_FLAGS_Y_INVERT flag is set. */
-static int write_png_bgra(const char *path, const uint8_t *data,
-    uint32_t width, uint32_t height, uint32_t stride, int y_invert, int already_rgb)
+static void read_pixel_rgba(uint32_t format, const uint8_t *src, uint8_t *dst) {
+    switch (format) {
+    case WL_SHM_FORMAT_ARGB8888:
+    case WL_SHM_FORMAT_XRGB8888:
+        dst[0] = src[2];
+        dst[1] = src[1];
+        dst[2] = src[0];
+        break;
+    case WL_SHM_FORMAT_ABGR8888:
+    case WL_SHM_FORMAT_XBGR8888:
+        dst[0] = src[0];
+        dst[1] = src[1];
+        dst[2] = src[2];
+        break;
+    case WL_SHM_FORMAT_RGB888:
+        dst[0] = src[2];
+        dst[1] = src[1];
+        dst[2] = src[0];
+        break;
+    case WL_SHM_FORMAT_BGR888:
+        dst[0] = src[0];
+        dst[1] = src[1];
+        dst[2] = src[2];
+        break;
+    default:
+        dst[0] = dst[1] = dst[2] = 0;
+        break;
+    }
+    dst[3] = 0xff;
+}
+
+static int copy_frame_region_rgba(const Frame *frame,
+    uint32_t src_x, uint32_t src_y, uint32_t width, uint32_t height,
+    int y_invert, uint8_t *dst, uint32_t dst_stride)
+{
+    uint32_t bytes_per_pixel = 0;
+    if (!frame || !frame->data || !shm_format_info(frame->format, &bytes_per_pixel))
+        return -1;
+    if (frame->stride < frame->width * bytes_per_pixel)
+        return -1;
+    if (src_x > frame->width || src_y > frame->height ||
+        width > frame->width - src_x || height > frame->height - src_y)
+        return -1;
+    if (dst_stride < width * 4)
+        return -1;
+
+    const uint8_t *base = frame->data;
+    for (uint32_t y = 0; y < height; y++) {
+        uint32_t read_y = y_invert ? (frame->height - 1 - (src_y + y)) : (src_y + y);
+        const uint8_t *src = base + (size_t)read_y * frame->stride + (size_t)src_x * bytes_per_pixel;
+        uint8_t *out = dst + (size_t)y * dst_stride;
+        for (uint32_t x = 0; x < width; x++) {
+            read_pixel_rgba(frame->format, src + (size_t)x * bytes_per_pixel, out + (size_t)x * 4);
+        }
+    }
+    return 0;
+}
+
+static int write_png_rgba(const char *path, const uint8_t *data,
+    uint32_t width, uint32_t height, uint32_t stride)
 {
     FILE *fp = fopen(path, "wb");
     if (!fp) { perror(path); return -1; }
@@ -417,32 +520,26 @@ static int write_png_bgra(const char *path, const uint8_t *data,
         PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
     png_write_info(png, info);
 
-    uint8_t *row = malloc(stride);
-    if (!row) { png_destroy_write_struct(&png, &info); fclose(fp); return -1; }
-
     for (uint32_t y = 0; y < height; y++) {
-        uint32_t sy = y_invert ? (height - 1 - y) : y;
-        memcpy(row, data + (size_t)sy * stride, stride);
-        for (uint32_t x = 0; x < width; x++) {
-            if (!already_rgb) {
-                uint8_t b = row[x * 4];
-                row[x * 4]     = row[x * 4 + 2];
-                row[x * 4 + 2] = b;
-            }
-            /* Force opaque alpha. X-formats (XRGB/XBGR) leave the 4th byte
-             * undefined; some GPUs (e.g. NVIDIA) leave it 0, which made the
-             * whole screenshot transparent and render dark/washed out (#40).
-             * A screen capture is always opaque, so pin alpha to 255. */
-            row[x * 4 + 3] = 0xFF;
-        }
-        png_write_row(png, row);
+        png_write_row(png, data + (size_t)y * stride);
     }
-    free(row);
 
     png_write_end(png, NULL);
     png_destroy_write_struct(&png, &info);
     fclose(fp);
     return 0;
+}
+
+static int write_png_frame(const char *path, const Frame *frame, int y_invert) {
+    uint32_t stride = frame->width * 4;
+    uint8_t *rgba = malloc((size_t)stride * frame->height);
+    if (!rgba) return -1;
+    int rc = copy_frame_region_rgba(frame, 0, 0, frame->width, frame->height,
+        y_invert, rgba, stride);
+    if (rc == 0)
+        rc = write_png_rgba(path, rgba, frame->width, frame->height, stride);
+    free(rgba);
+    return rc;
 }
 
 /* ── Core capture ─────────────────────────────────────────────────────────── */
@@ -497,7 +594,7 @@ static int capture_output(State *state, Output *out, int cursor, const char *pat
     int rc = capture_one(state, out, cursor, &f);
     if (rc == 0) {
         int inv = (f.flags & ZWLR_SCREENCOPY_FRAME_V1_FLAGS_Y_INVERT) != 0;
-        rc = write_png_bgra(path, f.data, f.width, f.height, f.stride, inv, f.bgr_order);
+        rc = write_png_frame(path, &f, inv);
     } else {
         fprintf(stderr, "capture failed for output %s\n", out->name);
     }
@@ -535,7 +632,7 @@ static int capture_region(State *state,
         zwlr_screencopy_frame_v1_destroy(fo);
         if (rc == 0) {
             int inv = (f.flags & ZWLR_SCREENCOPY_FRAME_V1_FLAGS_Y_INVERT) != 0;
-            rc = write_png_bgra(path, f.data, f.width, f.height, f.stride, inv, f.bgr_order);
+            rc = write_png_frame(path, &f, inv);
             frame_cleanup(&f);
             return rc;
         }
@@ -567,12 +664,9 @@ static int capture_region(State *state,
     uint32_t cstride = pw * 4;
     uint8_t *crop = malloc((size_t)cstride * ph);
     if (!crop) { frame_cleanup(&ef); return -1; }
-    for (uint32_t row = 0; row < ph; row++) {
-        memcpy(crop + (size_t)row * cstride,
-               (const uint8_t *)ef.data + (size_t)(py + row) * ef.stride + (size_t)px * 4,
-               cstride);
-    }
-    int rc = write_png_bgra(path, crop, pw, ph, cstride, 0, ef.bgr_order);
+    int rc = copy_frame_region_rgba(&ef, (uint32_t)px, (uint32_t)py, pw, ph, 0, crop, cstride);
+    if (rc == 0)
+        rc = write_png_rgba(path, crop, pw, ph, cstride);
     free(crop);
     frame_cleanup(&ef);
     return rc;
@@ -623,17 +717,17 @@ static int capture_all(State *state, int cursor, const char *path) {
         int i = order[oi];
         Frame *f = &frames[i];
         int inv = (f->flags & ZWLR_SCREENCOPY_FRAME_V1_FLAGS_Y_INVERT) != 0;
-        for (uint32_t y = 0; y < f->height && y < total_h; y++) {
-            uint32_t sy = inv ? (f->height - 1 - y) : y;
-            memcpy(canvas + (size_t)y * canvas_stride + x_off * 4,
-                   (const uint8_t *)f->data + (size_t)sy * f->stride, f->width * 4);
+        if (copy_frame_region_rgba(f, 0, 0, f->width, f->height, inv,
+                canvas + (size_t)x_off * 4, canvas_stride) != 0) {
+            free(canvas);
+            for (int j = 0; j < n; j++)
+                frame_cleanup(&frames[j]);
+            return -1;
         }
         x_off += f->width;
     }
 
-    /* For multi-monitor canvas, swap bytes matching the first output's format */
-    int canvas_bgr = (n > 0) ? frames[0].bgr_order : 0;
-    int rc = write_png_bgra(path, canvas, total_w, total_h, canvas_stride, 0, canvas_bgr);
+    int rc = write_png_rgba(path, canvas, total_w, total_h, canvas_stride);
     free(canvas);
     for (int i = 0; i < n; i++)
         frame_cleanup(&frames[i]);
