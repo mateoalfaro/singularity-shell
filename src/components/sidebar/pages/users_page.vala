@@ -289,7 +289,7 @@ namespace Singularity.SidebarPages {
             var group = new PreferencesGroup(_("New Account"));
             fullname_row  = new EntryRow("Full Name");
             username_row  = new EntryRow("Username");
-            password_row  = new PasswordRow("Password");
+            password_row  = new PasswordRow(Singularity.Runtime.is_sinty_os() ? "PIN" : "Password");
             string[] types = { "Standard", "Administrator" };
             type_row = new SelectionRow(_("Account Type"), types, _("Standard"));
 
