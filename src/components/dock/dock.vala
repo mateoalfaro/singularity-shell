@@ -40,6 +40,8 @@ namespace Singularity {
         private uint _slide_timer_id = 0;
         private uint _fade_timer_id = 0;
         private uint _leave_timeout_id = 0;
+        private bool _input_recompute_pending = false;
+        private uint _input_retry_id = 0;
         private Gtk.Window? _reveal_barrier = null;
         private GtkLayerShell.Edge _reveal_barrier_edge = GtkLayerShell.Edge.BOTTOM;
         private int _last_dimension = 0;
@@ -194,9 +196,9 @@ namespace Singularity {
                     _enabled = _settings.get_boolean("dock-enabled");
                     if (!_enabled) {
                         ((Gtk.Widget) this).hide();
-                        set_exclusive_zone(this, 0);
-                        app_system.shell_dock_height = 0;
+                        update_dock_reservation();
                         _set_reveal_barrier_active(false);
+                        schedule_input_region_update();
                     } else {
                         present();
                         update_settings();
@@ -264,6 +266,7 @@ namespace Singularity {
             // Attach to the window widget so the hot-strip at the screen edge
             // (visible when dock is hidden) reliably fires enter/leave.
             ((Gtk.Widget) this).add_controller(motion);
+            map.connect_after(() => schedule_input_region_update());
 
             _sig_app_title_changed = app_system.app_title_changed.connect((win) => {
                 Widget? child = dock_box.get_first_child();
@@ -334,6 +337,112 @@ namespace Singularity {
             update_autohide_state();
         }
 
+        private bool should_reserve_dock_space() {
+            return _enabled
+                && !_hidden
+                && !_hidden_for_fullscreen
+                && visibility_mode == "always"
+                && !autohide
+                && !intellihide
+                && dock_style == "panel";
+        }
+
+        private void update_dock_reservation() {
+            int zone = should_reserve_dock_space()
+                ? int.max(0, _last_dimension - SHADOW_BOTTOM_PX)
+                : 0;
+            set_exclusive_zone(this, zone);
+            app_system.shell_dock_height = zone;
+        }
+
+        private void schedule_input_region_update() {
+            if (_input_recompute_pending) return;
+            _input_recompute_pending = true;
+            GLib.Idle.add(() => {
+                _input_recompute_pending = false;
+                recompute_input_region();
+                return GLib.Source.REMOVE;
+            });
+        }
+
+        private void schedule_input_region_retry() {
+            if (_input_retry_id != 0) return;
+            _input_retry_id = GLib.Timeout.add(50, () => {
+                _input_retry_id = 0;
+                recompute_input_region();
+                return GLib.Source.REMOVE;
+            });
+        }
+
+        private bool widget_has_visible_child(Widget w) {
+            Widget? child = w.get_first_child();
+            while (child != null) {
+                if (child.get_visible()) return true;
+                child = child.get_next_sibling();
+            }
+            return false;
+        }
+
+        private bool add_widget_input_rect(Cairo.Region region, Widget w) {
+            if (!w.get_visible()) return false;
+
+            Graphene.Rect bounds;
+            if (!w.compute_bounds(this, out bounds)) return false;
+            if (bounds.size.width < 1 || bounds.size.height < 1) return false;
+
+            var rect = Cairo.RectangleInt() {
+                x = (int) Math.floor(bounds.origin.x),
+                y = (int) Math.floor(bounds.origin.y),
+                width = (int) Math.ceil(bounds.size.width),
+                height = (int) Math.ceil(bounds.size.height)
+            };
+            region.union_rectangle(rect);
+            return true;
+        }
+
+        private void recompute_input_region() {
+            var surf = get_surface();
+            if (surf == null) return;
+
+            if (!_enabled || _hidden || _hidden_for_fullscreen || !get_visible()) {
+                surf.set_input_region(new Cairo.Region());
+                return;
+            }
+
+            int width = get_width();
+            int height = get_height();
+            if (width < 1 || height < 1) {
+                schedule_input_region_retry();
+                return;
+            }
+
+            if (dock_style == "panel") {
+                var full = new Cairo.Region();
+                full.union_rectangle(Cairo.RectangleInt() {
+                    x = 0,
+                    y = 0,
+                    width = width,
+                    height = height
+                });
+                surf.set_input_region(full);
+                return;
+            }
+
+            var region = new Cairo.Region();
+            bool any = add_widget_input_rect(region, dock_box);
+            if (widget_has_visible_child(start_area))
+                any = add_widget_input_rect(region, start_area) || any;
+            if (widget_has_visible_child(end_area))
+                any = add_widget_input_rect(region, end_area) || any;
+
+            if (!any && get_mapped()) {
+                schedule_input_region_retry();
+                return;
+            }
+
+            surf.set_input_region(region);
+        }
+
         private void update_gap() {
             int gap = _settings.get_int("dock-gap");
             string pos = _settings.get_string("dock-position");
@@ -348,6 +457,8 @@ namespace Singularity {
             set_margin(this, GtkLayerShell.Edge.TOP, 0);
             if (dock_style == "panel") {
                 _current_margin = 0;
+                update_dock_reservation();
+                schedule_input_region_update();
                 return;
             }
             if (pos == "left") {
@@ -367,6 +478,8 @@ namespace Singularity {
                 set_margin(this, GtkLayerShell.Edge.BOTTOM, int.max(0, gap - 21));
                 main_container.margin_top = gap;
             }
+            update_dock_reservation();
+            schedule_input_region_update();
         }
 
         private void update_position() {
@@ -405,6 +518,7 @@ namespace Singularity {
                 set_anchor(this, GtkLayerShell.Edge.LEFT, true);
                 set_anchor(this, GtkLayerShell.Edge.RIGHT, true);
             }
+            schedule_input_region_update();
         }
 
         private void update_style() {
@@ -430,6 +544,8 @@ namespace Singularity {
             update_gap();
             this.set_size_request(-1, -1);
             this.queue_resize();
+            update_dock_reservation();
+            schedule_input_region_update();
         }
 
         private void update_alignment() {
@@ -445,6 +561,7 @@ namespace Singularity {
                 dock_box.halign = Align.CENTER;
                 center_wrapper.halign = Align.CENTER;
             }
+            schedule_input_region_update();
         }
 
         // When a media/suffix widget expands, freeze the dock_box leading edge
@@ -460,6 +577,7 @@ namespace Singularity {
             dock_box.margin_start = alloc.x;
             dock_box.halign = Align.START;
             _dock_pinned = true;
+            schedule_input_region_update();
         }
 
         private void unpin_expansion() {
@@ -468,6 +586,7 @@ namespace Singularity {
             dock_box.margin_start = 0;
             dock_box.halign = Align.CENTER;
             _dock_pinned = false;
+            schedule_input_region_update();
         }
 
         private void update_fusion() {
@@ -545,6 +664,7 @@ namespace Singularity {
                 });
                 sys_box.add_controller(gesture);
             }
+            schedule_input_region_update();
         }
 
         public signal void activities_clicked();
@@ -573,15 +693,12 @@ namespace Singularity {
                 animate_dock(_hidden);
                 dock_visibility_changed(_hidden);
             } else if (!_hidden) {
-                // If not hidden, ensure exclusive zone is correct (it might have been 0)
-                if (!autohide && !(intellihide && is_any_window_maximized_on_my_monitor())) {
-                    set_exclusive_zone(this, int.max(0, _last_dimension - SHADOW_BOTTOM_PX));
-                } else {
-                    set_exclusive_zone(this, 0);
-                }
+                // If not hidden, ensure the current reservation mode is applied.
+                update_dock_reservation();
             }
 
             _set_reveal_barrier_active(_hidden);
+            schedule_input_region_update();
         }
 
         public string[] debug_list_vars() {
@@ -651,7 +768,8 @@ namespace Singularity {
                     _current_margin = gap;
                     present();
                     set_margin(this, _dock_edge(), gap);
-                    set_exclusive_zone(this, int.max(0, _last_dimension - SHADOW_BOTTOM_PX));
+                    update_dock_reservation();
+                    schedule_input_region_update();
                     queue_resize();
                     queue_draw();
                     break;
@@ -734,13 +852,15 @@ namespace Singularity {
 
             if (hide) {
                 dock_box.remove_css_class("dock-reveal-offset");
-                set_exclusive_zone(this, 0);
+                update_dock_reservation();
+                schedule_input_region_update();
                 if (edge == GtkLayerShell.Edge.BOTTOM) {
                     dock_box.add_css_class("dock-hiding");
                     _fade_timer_id = GLib.Timeout.add(260, () => {
                         _current_margin = off;
                         set_margin(this, edge, off);
                         _fade_timer_id = 0;
+                        schedule_input_region_update();
                         return GLib.Source.REMOVE;
                     });
                 } else {
@@ -755,12 +875,7 @@ namespace Singularity {
                 if (!_hidden_for_fullscreen) {
                     set_layer(this, GtkLayerShell.Layer.OVERLAY);
                 }
-                // Only the always-visible dock reserves work area. Autohide and
-                // intellihide overlap windows instead, otherwise restoring a
-                // minimized window makes it shrink to dodge a dock that is about
-                // to hide, and the shrink persists (issue #79).
-                bool reserve = !autohide && !intellihide;
-                set_exclusive_zone(this, reserve ? int.max(0, _last_dimension - SHADOW_BOTTOM_PX) : 0);
+                update_dock_reservation();
                 // Returning on-screen needs a fresh buffer; the idle frame clock
                 // won't render one, so an unmap->map cycle at the visible margin
                 // forces it (otherwise the surface comes back blank).
@@ -790,6 +905,7 @@ namespace Singularity {
             _fade_timer_id = GLib.Timeout.add(32, () => {
                 dock_box.remove_css_class("dock-reveal-offset");
                 _fade_timer_id = 0;
+                schedule_input_region_update();
                 return GLib.Source.REMOVE;
             });
         }
@@ -807,6 +923,7 @@ namespace Singularity {
                     _current_margin = target;
                     set_margin(this, edge, target);
                     _slide_timer_id = 0;
+                    schedule_input_region_update();
                     return GLib.Source.REMOVE;
                 }
                 double e = t * t * t;
@@ -872,9 +989,9 @@ namespace Singularity {
         private void update_visibility_mode() {
             if (!_enabled) {
                 ((Gtk.Widget) this).hide();
-                set_exclusive_zone(this, 0);
-                app_system.shell_dock_height = 0;
+                update_dock_reservation();
                 _set_reveal_barrier_active(false);
+                schedule_input_region_update();
                 return;
             }
             visibility_mode = _settings.get_string("dock-visibility-mode");
@@ -885,13 +1002,14 @@ namespace Singularity {
 
             if (visibility_mode == "always") {
                 present();
-                // Re-trigger size_allocate to restore the correct exclusive zone
+                // Re-trigger size_allocate to restore the correct reservation.
                 queue_resize();
             } else if (visibility_mode == "overview-only") {
                 hide();
-                set_exclusive_zone(this, 0);
+                update_dock_reservation();
             }
             update_autohide_state();
+            schedule_input_region_update();
         }
 
         // A window is fullscreen on THIS dock's monitor. Using the global
@@ -924,7 +1042,8 @@ namespace Singularity {
             if (fs == _hidden_for_fullscreen) return;
             _hidden_for_fullscreen = fs;
             if (fs) {
-                set_exclusive_zone(this, 0);
+                update_dock_reservation();
+                schedule_input_region_update();
                 set_layer(this, GtkLayerShell.Layer.BACKGROUND);
             } else {
                 set_layer(this, GtkLayerShell.Layer.OVERLAY);
@@ -952,6 +1071,7 @@ namespace Singularity {
                 else hide();
             }
             update_autohide_state();
+            schedule_input_region_update();
         }
 
         private bool update_clock() {
@@ -1045,6 +1165,7 @@ namespace Singularity {
                 dock_box.remove(child);
                 child = next;
             }
+            schedule_input_region_update();
             schedule_refresh();
         }
 
@@ -1194,6 +1315,7 @@ namespace Singularity {
             } else if (!has_suffix) {
                 suffix_revealer.reveal_child = false;
             }
+            schedule_input_region_update();
         }
 
         public bool has_extension_for_app(string app_id) {
@@ -1359,6 +1481,7 @@ namespace Singularity {
 
             update_active_app(app_system.get_focused_app_id());
             this.queue_resize();
+            schedule_input_region_update();
 
             if (!_refreshed_once && is_primary) {
                 _refreshed_once = true;
@@ -1376,8 +1499,10 @@ namespace Singularity {
             GLib.Idle.add(() => {
                 main_container.opacity = 1.0;
                 main_container.add_css_class("dock-intro");
+                schedule_input_region_update();
                 GLib.Timeout.add(620, () => {
                     main_container.remove_css_class("dock-intro");
+                    schedule_input_region_update();
                     return GLib.Source.REMOVE;
                 });
                 return GLib.Source.REMOVE;
@@ -2124,6 +2249,7 @@ namespace Singularity {
                     pin_expansion();
                     pill_weak.add_css_class("expanded");
                     rev_weak.reveal_child = true;
+                    schedule_input_region_update();
                 }
                 cancel_preview_dismiss();
                 arm_preview_show(pill_weak, app_id);
@@ -2137,6 +2263,7 @@ namespace Singularity {
                     pill_weak.remove_css_class("expanded");
                     rev_weak.reveal_child = false;
                     unpin_expansion();
+                    schedule_input_region_update();
                 }
                 cancel_preview_show();
                 if (_preview_popover != null) schedule_preview_dismiss();
@@ -2667,8 +2794,9 @@ namespace Singularity {
             return null;
         }
 
-        // Override size_allocate to set exclusive zone = height - shadow margin,
-        // so windows snap to the visual dock top, not the shadow's bottom edge.
+        // Panel-style docks reserve their visual size minus the shadow margin.
+        // Floating docks stay overlay-only and only expose their visible pill
+        // as an input region.
         private const int SHADOW_BOTTOM_PX = 4;
 
         public override void size_allocate(int width, int height, int baseline) {
@@ -2684,20 +2812,8 @@ namespace Singularity {
                 }
             }
 
-            if (_hidden) {
-                // Margin is owned by animate_dock's slide; only manage the zone.
-                GtkLayerShell.set_exclusive_zone(this, 0);
-                app_system.shell_dock_height = 0;
-            } else {
-                if (!autohide && !intellihide) {
-                    int zone = int.max(0, dimension - SHADOW_BOTTOM_PX);
-                    GtkLayerShell.set_exclusive_zone(this, zone);
-                    app_system.shell_dock_height = zone;
-                } else {
-                    GtkLayerShell.set_exclusive_zone(this, 0);
-                    app_system.shell_dock_height = 0;
-                }
-            }
+            update_dock_reservation();
+            schedule_input_region_update();
         }
 
         private Widget create_corner_hint(string corner_class) {
