@@ -42,6 +42,7 @@ namespace Singularity {
         private uint _leave_timeout_id = 0;
         private bool _input_recompute_pending = false;
         private uint _input_retry_id = 0;
+        private bool _input_region_full_temporary = false;
         private Gtk.Window? _reveal_barrier = null;
         private GtkLayerShell.Edge _reveal_barrier_edge = GtkLayerShell.Edge.BOTTOM;
         private int _last_dimension = 0;
@@ -186,6 +187,12 @@ namespace Singularity {
                 if (key == "dock-gap") update_gap();
                 if (key == "dock-autohide") {
                     autohide = _settings.get_boolean("dock-autohide");
+                    if (!autohide && _hidden) {
+                        _hidden = false;
+                        _hovered = false;
+                        show_dock_now_for_setting_change();
+                        dock_visibility_changed(_hidden);
+                    }
                     update_autohide_state();
                 }
                 if (key == "dock-intellihide") {
@@ -342,9 +349,7 @@ namespace Singularity {
                 && !_hidden
                 && !_hidden_for_fullscreen
                 && visibility_mode == "always"
-                && !autohide
-                && !intellihide
-                && dock_style == "panel";
+                && !autohide;
         }
 
         private void update_dock_reservation() {
@@ -372,6 +377,44 @@ namespace Singularity {
                 recompute_input_region();
                 return GLib.Source.REMOVE;
             });
+        }
+
+        private bool set_full_input_region() {
+            var surf = get_surface();
+            if (surf == null) return false;
+
+            int width = get_width();
+            int height = get_height();
+            if (width < 1 || height < 1) return false;
+
+            var full = new Cairo.Region();
+            full.union_rectangle(Cairo.RectangleInt() {
+                x = 0,
+                y = 0,
+                width = width,
+                height = height
+            });
+            surf.set_input_region(full);
+            _input_region_full_temporary = true;
+            return true;
+        }
+
+        private void show_dock_now_for_setting_change() {
+            dock_box.remove_css_class("dock-hiding");
+            dock_box.remove_css_class("dock-reveal-offset");
+            int gap = _settings.get_int("dock-gap");
+            GtkLayerShell.Edge edge = _dock_edge();
+            int visible_margin = (edge == GtkLayerShell.Edge.BOTTOM)
+                ? int.max(0, gap - 21) : gap;
+            _current_margin = visible_margin;
+            set_margin(this, edge, visible_margin);
+            set_layer(this, GtkLayerShell.Layer.OVERLAY);
+            present();
+            update_dock_reservation();
+            set_full_input_region();
+            schedule_input_region_update();
+            _set_reveal_barrier_active(false);
+            pulse_frame_clock();
         }
 
         private bool widget_has_visible_child(Widget w) {
@@ -404,8 +447,13 @@ namespace Singularity {
             var surf = get_surface();
             if (surf == null) return;
 
-            if (!_enabled || _hidden || _hidden_for_fullscreen || !get_visible()) {
+            if (!_enabled || _hidden_for_fullscreen || !get_visible()) {
                 surf.set_input_region(new Cairo.Region());
+                _input_region_full_temporary = false;
+                return;
+            }
+
+            if (_hidden) {
                 return;
             }
 
@@ -417,14 +465,8 @@ namespace Singularity {
             }
 
             if (dock_style == "panel") {
-                var full = new Cairo.Region();
-                full.union_rectangle(Cairo.RectangleInt() {
-                    x = 0,
-                    y = 0,
-                    width = width,
-                    height = height
-                });
-                surf.set_input_region(full);
+                set_full_input_region();
+                _input_region_full_temporary = false;
                 return;
             }
 
@@ -436,11 +478,14 @@ namespace Singularity {
                 any = add_widget_input_rect(region, end_area) || any;
 
             if (!any && get_mapped()) {
+                if (!_input_region_full_temporary)
+                    set_full_input_region();
                 schedule_input_region_retry();
                 return;
             }
 
             surf.set_input_region(region);
+            _input_region_full_temporary = false;
         }
 
         private void update_gap() {
@@ -894,6 +939,7 @@ namespace Singularity {
                 dock_box.add_css_class("dock-reveal-offset");
                 ((Gtk.Widget) this).hide();
                 present();
+                set_full_input_region();
                 start_content_slide();
             }
             pulse_frame_clock();
@@ -2794,9 +2840,8 @@ namespace Singularity {
             return null;
         }
 
-        // Panel-style docks reserve their visual size minus the shadow margin.
-        // Floating docks stay overlay-only and only expose their visible pill
-        // as an input region.
+        // Visible, non-autohide docks reserve their visual size minus the
+        // shadow margin. Floating docks still clip pointer input to the pill.
         private const int SHADOW_BOTTOM_PX = 4;
 
         public override void size_allocate(int width, int height, int baseline) {
